@@ -1,0 +1,8 @@
+This is the original file content.
+It contains multiple lines of text.
+Some lines will be the same in both files.
+This line will be deleted in file2.
+Common content that appears in both files.
+Another line that stays the same.
+This is line 7 in the original file.
+Final line of the original content.

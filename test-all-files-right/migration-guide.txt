@@ -1,0 +1,10 @@
+Migration Guide from v1 to v2
+
+This file only exists in the right directory.
+It explains how to migrate from the left version to the right version.
+
+Steps:
+1. Update common1.txt with new content
+2. Update common2.yaml configuration
+3. Remove legacy-config.ini
+4. Add new feature configurations

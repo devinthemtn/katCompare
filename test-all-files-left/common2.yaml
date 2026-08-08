@@ -1,0 +1,4 @@
+# Common config file - left version
+version: 1.0
+debug: false
+port: 8080

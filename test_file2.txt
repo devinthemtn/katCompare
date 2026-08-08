@@ -1,0 +1,6 @@
+Hello Universe  
+This is line 2
+Modified line 3
+Line 4 stays the same
+New line inserted here
+Last line

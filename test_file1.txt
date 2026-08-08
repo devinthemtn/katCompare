@@ -1,0 +1,6 @@
+Hello World
+This is line 2
+Original line 3
+Line 4 stays the same
+This line will be deleted
+Last line

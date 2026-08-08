@@ -1,0 +1,9 @@
+{
+  "name": "New Feature Config",
+  "version": "2.0",
+  "features": {
+    "new_feature_1": true,
+    "new_feature_2": false,
+    "experimental": true
+  }
+}

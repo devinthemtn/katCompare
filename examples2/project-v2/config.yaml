@@ -1,0 +1,41 @@
+# Project Configuration v2
+name: "example-project"
+version: "2.1.0"
+
+database:
+  host: "db.production.com"
+  port: 5432
+  name: "myapp_production_db"
+  user: "admin"
+  password: "newSecretPassword456"
+  ssl_enabled: true
+
+server:
+  host: "0.0.0.0"
+  port: 3000
+  timeout: 45
+  workers: 4
+
+features:
+  auth_enabled: true
+  logging_level: "debug"
+  cache_enabled: true
+  cache_ttl: 300
+  max_connections: 200
+
+api:
+  rate_limit: 2000
+  allowed_origins:
+    - "https://example.com"
+    - "https://www.example.com"
+    - "https://api.example.com"
+  cors_enabled: true
+
+monitoring:
+  enabled: true
+  endpoint: "http://monitoring.example.com:9090"
+  metrics_interval: 60
+
+security:
+  jwt_secret: "super-secret-jwt-key"
+  session_timeout: 1800

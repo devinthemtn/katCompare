@@ -1,0 +1,4 @@
+This file exists in both directories
+But the content is different
+Line 3 from right - MODIFIED
+Line 4 added in right
