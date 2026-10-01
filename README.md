@@ -76,6 +76,7 @@ cd filecmp-gui
 wails dev      # live development with hot reload
 wails build    # production binary in build/bin/
 ```
+then you can just copy the bin from the 'build/bin' directory into your personal bin directory.
 
 #### Linux: WebKitGTK version
 
@@ -116,7 +117,7 @@ By default the exe downloads WebView2 on first run if it's missing. To bundle it
 
 #### Building for macOS
 
-Wails does not support cross-compiling to macOS from Linux or Windows (it needs Apple's Cocoa/WebKit frameworks and `clang` with the macOS SDK). Build directly on a Mac with `wails build`, or use a macOS CI runner (e.g. GitHub Actions' `macos-latest`).
+Wails does not support cross-compiling to macOS from Linux or Windows (it needs Apple's Cocoa/WebKit frameworks and `clang` with the macOS SDK). Build directly on a Mac with `wails build`.
 
 ### GUI project structure
 
