@@ -1,8 +1,8 @@
 # File Compare
 
-**Compare files, directories, and git refs — then merge just the changes you want.**
+**Compare files, directories, and git refs — then merge just the changes you want. Also I wrote it to be easier for red/green colour blind people to use because I'm tired of all diff tools using at least by default red/green.**
 
-File Compare is a fast, color-coded diff and merge tool written in Go. It ships two ways from one engine: a **native desktop app** (Wails) and a **keyboard-driven terminal UI** (Bubble Tea).
+File Compare is a fast, color-coded diff and merge tool written in Go that is clean looking and simple to use. It ships two ways from one engine: a **native desktop app** (Wails) and a **keyboard-driven terminal UI** (Bubble Tea).
 
 ![File Compare desktop GUI comparing a config file between HEAD and origin/main in unified view](assets/snip-gui-file-cmp.png)
 
