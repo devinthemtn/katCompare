@@ -1,59 +1,67 @@
-# File Comparison TUI Tool
+# File Compare
 
-A powerful terminal-based user interface (TUI) application for visually comparing files and directories with beautiful color-coded diff highlighting. Built with Go using Bubble Tea framework.
+**Compare files, directories, and git refs — then merge just the changes you want.**
 
-> **Prefer a GUI?** Everything below also ships as a native desktop app — same engine, mouse-driven interface. Jump to [Desktop GUI (Wails)](#desktop-gui-wails).
+File Compare is a fast, color-coded diff and merge tool written in Go. It ships two ways from one engine: a **native desktop app** (Wails) and a **keyboard-driven terminal UI** (Bubble Tea).
 
-## ✨ Features
+![File Compare desktop GUI comparing a config file between HEAD and origin/main in unified view](assets/snip-gui-file-cmp.png)
 
-- 🎨 **Visual Diff Highlighting**: Blue backgrounds for additions, red backgrounds for deletions
-- 👥 **Side-by-Side View**: Compare files in unified or side-by-side layout modes
-- 🔀 **Interactive Merge Mode**: Cherry-pick and apply specific changes between files
-- 📋 **File Copy Mode**: Easily copy unique files between directories with selective control
-- 📁 **Complete Directory Analysis**: Shows ALL files from both directories (common and unique)
-- 🏷️ **Source Identification**: Clear indicators for files that exist in only one directory
-- 🌱 **Git Mode**: Compare a ref against the working tree, or two refs against each other
-- 🔎 **File List Filtering**: Narrow the file list by typing `/` followed by a substring
-- ⌨️ **Path Autocomplete**: Live filesystem suggestions as you type a path
-- ⌨️ **Intuitive Controls**: Vim-like navigation (j/k) with full arrow key support
-- 🔍 **Intelligent File Detection**: Automatically identifies 60+ text file types for comparison
-- 📊 **Real-time Diff Statistics**: Live counts of equal, added, and deleted lines
-- 🖥️ **Full Screen TUI**: Clean, distraction-free interface with proper scrolling
-- 🚀 **Fast Performance**: Efficient diff algorithm with semantic cleanup
-- 📱 **Responsive Design**: Adapts to terminal window size changes
-- 🎯 **Multi-file Navigation**: Easy switching between multiple file comparisons
-- 💾 **Selective Merging**: Save merged results with only the changes you want
-- 🔄 **Directory Synchronization**: Copy unique files between directories for easy sync
+<sub>The desktop GUI in Git mode, diffing `HEAD` against `origin/main` — changed files on the left, a color-coded unified diff on the right, with Side-by-side and Merge views one click away.</sub>
 
-## Installation
+## Why File Compare?
+
+- 🎨 **Diffs you can read at a glance** — blue for additions, red for deletions, with old/new line numbers and live `equal / +added / -deleted` counts
+- 🌱 **Git-aware** — diff any ref against another ref, or against your working tree, without leaving the app
+- 📁 **Whole-directory comparison** — recursively finds every text file on both sides and flags identical (✓), different (✗), and one-side-only files
+- 🔀 **Cherry-pick merging** — choose individual insertions/deletions to apply and save to `<file>.merged`; originals are never overwritten
+- 📋 **Directory sync** — copy files that exist on only one side into the other, in either direction
+- 👥 **Unified or side-by-side** views, switchable instantly
+- 🔎 **Filter and autocomplete** — narrow the file list by name, and get live path suggestions as you type
+- 🖱️⌨️ **Your choice of interface** — point-and-click desktop app or vim-style (`j`/`k`) terminal UI, same results either way
+- 🔍 **60+ text file types** detected automatically
+
+## Quick Start
+
+### Desktop GUI
+
+Requires Go 1.25+, Node.js, and the [Wails v2 CLI](https://wails.io):
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd golang-fileCmp
-
-# Build the application
-go build -o filecmp
-
-# Or run directly
-go run main.go
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+cd filecmp-gui
+wails build            # Linux: may need -tags webkit2_41 (see WebKitGTK notes below)
+./build/bin/filecmp-gui
 ```
+
+Pick the **Files / Directories** tab to compare two paths (type them, or use the native file/folder picker), or the **Git** tab to compare refs — leave the right ref blank to compare against the working tree.
+
+### Terminal UI
+
+```bash
+go build -o filecmp
+./filecmp                         # interactive path entry
+./filecmp old.yaml new.yaml       # two files
+./filecmp ./project-v1 ./project-v2   # two directories
+./filecmp --git HEAD~1            # a git ref vs the working tree
+```
+
+---
 
 ## Desktop GUI (Wails)
 
-Everything in this README also ships as a native desktop app in [`filecmp-gui/`](filecmp-gui/) — the same diff/merge/file/git engine (copied into `filecmp-gui/internal/`, unmodified), behind a mouse-driven interface built with [Wails](https://wails.io) (Go backend + vanilla HTML/CSS/JS frontend, no framework) instead of a terminal UI. It's a separate Go module and doesn't affect or depend on the TUI build above.
+The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It uses the same diff/merge/file/git engine as the TUI (copied into `filecmp-gui/internal/`, unmodified) behind a mouse-driven interface built with [Wails](https://wails.io) — a Go backend with a vanilla HTML/CSS/JS frontend, no framework. It's a separate Go module and doesn't affect or depend on the TUI build.
 
 ### GUI Features
 
 - Compare two files or two directories (recursive, text-file-aware); the file list shows common files and files unique to either side, with identical/different indicators
 - **Git mode**: diff a ref against another ref, or a ref against the working tree
-- Unified and side-by-side diff views, color-coded like the TUI (blue = added, red = deleted)
-- **Merge mode**: select which insertions/deletions to apply per line, then save to `<file>.merged` — the originals are never overwritten
-- **Copy mode**: copy files that exist on only one side into the other directory, in either direction
+- **Unified** and **side-by-side** diff views, color-coded like the TUI (blue = added, red = deleted)
+- **Merge view**: select which insertions/deletions to apply per line, then save to `<file>.merged` — the originals are never overwritten
+- **Copy**: copy files that exist on only one side into the other directory, in either direction
 - Path autocomplete and native file/folder picker dialogs
 - File-list filtering
 
-### Installing the GUI
+### Building the GUI
 
 Prerequisites: Go 1.25+, Node.js (for the Vite-built frontend), and the Wails v2 CLI:
 
@@ -134,7 +142,19 @@ filecmp-gui/
 - Copy mode is unavailable when comparing git refs, since the compared "roots" are synthetic (commit contents / working tree), not real directories to copy into.
 - `filecmp-gui/internal/{differ,file,merge,git}` are plain copies of the same-named packages at the repository root, not imports — Go's `internal/` visibility rules don't allow cross-module imports, and this module is intentionally independent of the TUI's module.
 
-## Usage
+---
+
+## Terminal UI
+
+The TUI is a full-screen, keyboard-driven interface built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss). It adapts to terminal resizes and supports vim-style navigation.
+
+### Installation
+
+```bash
+git clone <repository-url>
+cd fileCmp-golang-wails
+go build -o filecmp     # or: make deps && make build
+```
 
 ### Command Line Options
 
@@ -394,7 +414,7 @@ make demo
 ```bash
 # Clone and build
 git clone <repository-url>
-cd golang-fileCmp
+cd fileCmp-golang-wails
 make deps
 make build
 
