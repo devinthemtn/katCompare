@@ -415,10 +415,10 @@ func (m *Model) renderDiffView() string {
 	leftFile := m.currentDiff.LeftFile
 	rightFile := m.currentDiff.RightFile
 	maxFileNameWidth := (m.windowWidth - 4) / 2 // Split width for both names
-	if len(leftFile) > maxFileNameWidth {
+	if maxFileNameWidth > 3 && len(leftFile) > maxFileNameWidth {
 		leftFile = "..." + leftFile[len(leftFile)-maxFileNameWidth+3:]
 	}
-	if len(rightFile) > maxFileNameWidth {
+	if maxFileNameWidth > 3 && len(rightFile) > maxFileNameWidth {
 		rightFile = "..." + rightFile[len(rightFile)-maxFileNameWidth+3:]
 	}
 

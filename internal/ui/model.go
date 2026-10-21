@@ -254,6 +254,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the current view
 func (m *Model) View() string {
+	// Layout depends on the terminal size, which arrives in the first
+	// WindowSizeMsg - render nothing until then.
+	if m.windowWidth == 0 {
+		return ""
+	}
+
 	switch m.viewMode {
 	case ViewModeFileSelect:
 		return m.renderFileSelectView()
@@ -1170,6 +1176,16 @@ func (m *Model) SetRightPath(path string) {
 			m.selectedFile = files[0]
 		}
 	}
+}
+
+// OpenDiffIfFiles jumps straight to the diff view when both loaded paths are
+// single files. Directory comparisons stay on the file list so the user can
+// pick which file to diff.
+func (m *Model) OpenDiffIfFiles() {
+	if m.leftFile == nil || m.rightFile == nil || m.leftFile.IsDir || m.rightFile.IsDir {
+		return
+	}
+	m.openDiffForSelected()
 }
 
 // Path suggestion methods

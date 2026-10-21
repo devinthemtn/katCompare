@@ -43,6 +43,7 @@ func main() {
 		}
 		if len(args) >= 2 {
 			model.SetRightPath(args[1])
+			model.OpenDiffIfFiles()
 		}
 	}
 
