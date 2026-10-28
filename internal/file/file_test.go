@@ -289,3 +289,15 @@ func keys2(m map[string][2]*FileInfo) []string {
 	}
 	return out
 }
+
+func TestIsTextFileUnknownExtensionSniffsContent(t *testing.T) {
+	fi := &FileInfo{Path: "notes.log", Name: "notes.log", Content: "plain text\nline two\n"}
+	if !fi.IsTextFile() {
+		t.Error("expected text content with unknown extension to be a text file")
+	}
+
+	fi = &FileInfo{Path: "data.dat", Name: "data.dat", Content: "\x7fELF\x00\x01\x02"}
+	if fi.IsTextFile() {
+		t.Error("expected content with NUL bytes to NOT be a text file")
+	}
+}

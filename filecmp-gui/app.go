@@ -34,10 +34,14 @@ type App struct {
 
 	gitMode bool
 	leftRef string
+
+	// Paths passed on the command line, pre-filled into the UI on startup.
+	initialPaths []string
 }
 
-func NewApp() *App {
+func NewApp(initialPaths []string) *App {
 	return &App{
+		initialPaths: initialPaths,
 		fileManager: file.New(),
 		differ:      differ.New(),
 		merger:      merge.New(),
@@ -116,6 +120,12 @@ func (a *App) SelectFile() (string, error) {
 }
 
 // ---- Loading comparisons ----
+
+// GetInitialPaths returns the left/right paths given on the command line
+// (zero, one or two entries).
+func (a *App) GetInitialPaths() []string {
+	return a.initialPaths
+}
 
 // LoadComparison loads left/right paths (files or directories) and returns
 // the merged file list (common files + files unique to either side).

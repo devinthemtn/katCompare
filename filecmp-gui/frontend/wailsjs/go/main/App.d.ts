@@ -6,6 +6,8 @@ export function CopyFiles(arg1:Array<string>,arg2:string):Promise<string>;
 
 export function GetDiff(arg1:string):Promise<main.DiffResult>;
 
+export function GetInitialPaths():Promise<Array<string>>;
+
 export function LoadComparison(arg1:string,arg2:string):Promise<main.ComparisonResult>;
 
 export function LoadGitComparison(arg1:string,arg2:string):Promise<main.ComparisonResult>;

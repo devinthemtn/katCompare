@@ -104,7 +104,8 @@ func (fi *FileInfo) GetReader() io.Reader {
 	return strings.NewReader(fi.Content)
 }
 
-// IsTextFile checks if the file appears to be a text file based on its extension
+// IsTextFile checks if the file appears to be a text file. Known extensions and
+// names are accepted directly; anything else is sniffed for binary content.
 func (fi *FileInfo) IsTextFile() bool {
 	if fi.IsDir {
 		return false
@@ -141,7 +142,20 @@ func (fi *FileInfo) IsTextFile() bool {
 		}
 	}
 
-	return false
+	return looksLikeText(fi.Content)
+}
+
+// looksLikeText reports whether content appears to be text, using the same
+// heuristic as git: no NUL bytes within the first 8000 bytes.
+func looksLikeText(content string) bool {
+	if content == "" {
+		return false
+	}
+	sniff := content
+	if len(sniff) > 8000 {
+		sniff = sniff[:8000]
+	}
+	return !strings.Contains(sniff, "\x00")
 }
 
 // GetAllFiles recursively gets all files from a FileInfo tree

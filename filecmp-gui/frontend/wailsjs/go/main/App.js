@@ -10,6 +10,10 @@ export function GetDiff(arg1) {
   return window['go']['main']['App']['GetDiff'](arg1);
 }
 
+export function GetInitialPaths() {
+  return window['go']['main']['App']['GetInitialPaths']();
+}
+
 export function LoadComparison(arg1, arg2) {
   return window['go']['main']['App']['LoadComparison'](arg1, arg2);
 }

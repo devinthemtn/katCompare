@@ -3,6 +3,7 @@ import {
     LoadComparison,
     LoadGitComparison,
     GetDiff,
+    GetInitialPaths,
     SaveMerge,
     CopyFiles,
     SelectDirectory,
@@ -735,3 +736,13 @@ document.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------------------
 
 renderContentHeader();
+
+// Pre-fill paths passed on the command line, and compare if both were given.
+GetInitialPaths()
+    .then((paths) => {
+        const [left, right] = paths || [];
+        if (left) leftPathInput.value = left;
+        if (right) rightPathInput.value = right;
+        if (left && right) runComparison(LoadComparison(left, right));
+    })
+    .catch((err) => setStatus(goErrorMessage(err), 'error'));
