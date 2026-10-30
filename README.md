@@ -22,6 +22,17 @@ File Compare is a fast, color-coded diff and merge tool written in Go that is cl
 
 ## Quick Start
 
+### Build and install both in one step
+
+From the repository root (needs the GUI prerequisites below):
+
+```bash
+make install                          # builds TUI + GUI, installs to $(go env GOPATH)/bin
+make install BINDIR=~/.local/bin      # or pick another directory on your PATH
+```
+
+This installs `filecmp` (TUI) and `filecmp-gui` (GUI). Use `make install-tui` / `make install-gui` for just one, and `make uninstall` to remove them.
+
 ### Desktop GUI
 
 Requires Go 1.25+, Node.js, and the [Wails v2 CLI](https://wails.io):

@@ -1,18 +1,30 @@
-.PHONY: build clean test run demo help install
+.PHONY: all build build-gui clean test run demo help install install-tui install-gui uninstall
 
 # Variables
 BINARY_NAME=filecmp
 BUILD_DIR=build
 MAIN_FILE=main.go
+GUI_DIR=filecmp-gui
+GUI_BINARY=filecmp-gui
+WAILS ?= wails
+# Install location (override with: make install BINDIR=/usr/local/bin)
+BINDIR ?= $(shell go env GOPATH)/bin
 
-# Default target
-all: build
+# Default target: build both the TUI and the GUI
+all: build build-gui
 
 # Build the application
 build:
 	@echo "🔨 Building $(BINARY_NAME)..."
 	@go build -o $(BINARY_NAME) $(MAIN_FILE)
 	@echo "✅ Build complete: ./$(BINARY_NAME)"
+
+# Build the Wails desktop GUI (also installs frontend npm deps)
+build-gui:
+	@command -v $(WAILS) >/dev/null 2>&1 || { echo "❌ wails CLI not found. Install it with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"; exit 1; }
+	@echo "🔨 Building $(GUI_BINARY)..."
+	@cd $(GUI_DIR) && $(WAILS) build -clean
+	@echo "✅ Build complete: ./$(GUI_DIR)/build/bin/$(GUI_BINARY)"
 
 # Build with optimizations for release
 build-release:
@@ -109,13 +121,25 @@ clean:
 	@echo "🧹 Cleaning build artifacts..."
 	@rm -f $(BINARY_NAME)
 	@rm -rf $(BUILD_DIR)
+	@rm -rf $(GUI_DIR)/build/bin
 	@echo "✅ Clean complete"
 
-# Install the binary to system PATH
-install: build
-	@echo "📲 Installing $(BINARY_NAME) to /usr/local/bin..."
-	@sudo cp $(BINARY_NAME) /usr/local/bin/
-	@echo "✅ Installation complete. You can now run '$(BINARY_NAME)' from anywhere"
+# Build and install both the TUI and the GUI to $(BINDIR)
+install: install-tui install-gui
+	@echo "✅ Installation complete. Run '$(BINARY_NAME)' (TUI) or '$(GUI_BINARY)' (GUI) from anywhere"
+
+install-tui: build
+	@echo "📲 Installing $(BINARY_NAME) to $(BINDIR)..."
+	@install -Dm755 $(BINARY_NAME) $(BINDIR)/$(BINARY_NAME)
+
+install-gui: build-gui
+	@echo "📲 Installing $(GUI_BINARY) to $(BINDIR)..."
+	@install -Dm755 $(GUI_DIR)/build/bin/$(GUI_BINARY) $(BINDIR)/$(GUI_BINARY)
+
+# Remove installed binaries
+uninstall:
+	@rm -f $(BINDIR)/$(BINARY_NAME) $(BINDIR)/$(GUI_BINARY)
+	@echo "🗑️  Removed $(BINARY_NAME) and $(GUI_BINARY) from $(BINDIR)"
 
 # Show help
 help:
@@ -123,7 +147,9 @@ help:
 	@echo "==========================================="
 	@echo ""
 	@echo "Available targets:"
-	@echo "  build         Build the application (default)"
+	@echo "  all           Build both TUI and GUI (default)"
+	@echo "  build         Build the TUI"
+	@echo "  build-gui     Build the Wails GUI (needs wails CLI)"
 	@echo "  build-release Build optimized release version"
 	@echo "  build-all     Build for multiple platforms"
 	@echo "  deps          Install Go dependencies"
@@ -141,7 +167,11 @@ help:
 	@echo "  test-responsive Test responsive design at different widths"
 	@echo "  test-width-fix Test selected file status width fix"
 	@echo "  clean         Clean build artifacts"
-	@echo "  install       Install to system PATH"
+	@echo "  install       Build and install TUI + GUI to BINDIR"
+	@echo "                (default: \$$(go env GOPATH)/bin)"
+	@echo "  install-tui   Build and install only the TUI"
+	@echo "  install-gui   Build and install only the GUI"
+	@echo "  uninstall     Remove installed binaries from BINDIR"
 	@echo "  help          Show this help message"
 	@echo ""
 	@echo "Examples:"
@@ -154,7 +184,8 @@ help:
 	@echo "  make test-responsive    # Test UI at different terminal widths"
 	@echo "  make test-width-fix     # Test selected file status width fix"
 	@echo "  make run-files          # Quick test with sample files"
-	@echo "  make install            # Install system-wide"
+	@echo "  make install            # Build + install TUI and GUI"
+	@echo "  make install BINDIR=~/.local/bin"
 	@echo ""
 	@echo "Quick Start:"
 	@echo "  1. make deps            # Install dependencies"

@@ -1,0 +1,10 @@
+# TUI binary (make build)
+/filecmp
+/filecmp.exe
+
+# Multi-platform builds (make build-all)
+/build/
+
+# Go test/coverage output
+*.test
+*.out

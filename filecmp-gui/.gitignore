@@ -1,3 +1,6 @@
 build/bin
 node_modules
 frontend/dist
+
+# Temp files from NSIS installer builds (wails build -nsis)
+build/windows/installer/tmp/
