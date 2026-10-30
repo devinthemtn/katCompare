@@ -10,5 +10,12 @@
   "author": {
     "name": "Thomas Koefod",
     "email": "devinthemtn@gmail.com"
+  },
+  "info": {
+    "companyName": "Thomas Koefod",
+    "productName": "File Compare",
+    "productVersion": "1.1.0",
+    "copyright": "Copyright © 2026 Thomas Koefod",
+    "comments": "Compare files and directories side by side"
   }
 }

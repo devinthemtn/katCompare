@@ -1,4 +1,4 @@
-.PHONY: all build build-gui build-release build-all build-windows build-gui-windows clean test run demo help install install-tui install-gui install-windows uninstall
+.PHONY: all build build-gui build-release build-all build-windows build-gui-windows build-win-installer clean test run demo help install install-tui install-gui install-windows uninstall
 
 # Variables
 BINARY_NAME=filecmp
@@ -22,6 +22,7 @@ EXE := $(shell go env GOEXE)
 # Windows builds (cross-compiled; no cgo needed)
 WIN_TUI = $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe
 WIN_GUI = $(BUILD_DIR)/$(GUI_BINARY)-windows-amd64.exe
+WIN_INSTALLER = $(BUILD_DIR)/$(GUI_BINARY)-windows-amd64-installer.exe
 
 # Under WSL, "make install" also installs the Windows builds into
 # WIN_INSTALL_DIR (default: %LOCALAPPDATA%\Programs\filecmp) and a
@@ -67,6 +68,19 @@ build-release:
 	@echo "🚀 Building $(BINARY_NAME) for release..."
 	@go build -ldflags="-s -w $(LDFLAGS)" -o $(BINARY_NAME)$(EXE) $(MAIN_FILE)
 	@echo "✅ Release build complete: ./$(BINARY_NAME)$(EXE)"
+
+# Build a per-user Windows installer for the GUI (no admin prompt; installs to
+# %LOCALAPPDATA%\Programs\File Compare with Start menu + desktop shortcuts).
+# Needs NSIS: sudo apt install nsis. The installer's product name/version come
+# from the "info" section of filecmp-gui/wails.json.
+build-win-installer:
+	@command -v $(WAILS) >/dev/null 2>&1 || { echo "❌ wails CLI not found. Install it with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"; exit 1; }
+	@command -v makensis >/dev/null 2>&1 || { echo "❌ makensis not found. Install it with: sudo apt install nsis"; exit 1; }
+	@echo "🔨 Building Windows installer..."
+	@cd $(GUI_DIR) && CGO_ENABLED=0 $(WAILS) build -platform windows/amd64 -nsis -installscope user -ldflags "$(LDFLAGS)"
+	@mkdir -p $(BUILD_DIR)
+	@cp $(GUI_DIR)/build/bin/$(GUI_BINARY)-amd64-installer.exe $(WIN_INSTALLER)
+	@echo "✅ Installer complete: ./$(WIN_INSTALLER)"
 
 # Build for multiple platforms (TUI for all, plus the Windows GUI)
 build-all: build-gui-windows
@@ -214,6 +228,7 @@ help:
 	@echo "  build-all     Build for multiple platforms (+ Windows GUI)"
 	@echo "  build-windows Cross-compile the TUI for Windows"
 	@echo "  build-gui-windows Cross-compile the GUI for Windows"
+	@echo "  build-win-installer Build a per-user Windows installer (needs NSIS)"
 	@echo "  deps          Install Go dependencies"
 	@echo "  test          Run tests"
 	@echo "  test-diff     Run diff engine test"

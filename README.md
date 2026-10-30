@@ -139,6 +139,8 @@ Output goes to `filecmp-gui/build/bin/`:
 - `filecmp-gui.exe` — the app
 - `filecmp-gui-amd64-installer.exe` — NSIS installer (only with `-nsis`)
 
+**Installer for Windows users:** `make build-win-installer` (needs `sudo apt install nsis`) creates `build/filecmp-gui-windows-amd64-installer.exe`. Double-clicking it installs File Compare for the current user (no admin prompt) into `%LOCALAPPDATA%\Programs\File Compare`. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. The installer is unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. The product name and version shown come from the `info` section of `filecmp-gui/wails.json`. Bump `productVersion` there when you release.
+
 By default the exe downloads WebView2 on first run if it's missing. To bundle it instead (fully offline install), add `-webview2 embed`.
 
 #### Building for macOS
