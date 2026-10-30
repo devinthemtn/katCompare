@@ -1,0 +1,38 @@
+#!/bin/sh
+# filecmp-win: run the Windows build of filecmp from inside WSL.
+#
+#   filecmp-win [args]          Windows GUI (detached, native Windows window)
+#   filecmp-win --tui [args]    Windows TUI in this terminal
+#
+# Arguments that are existing paths are translated to Windows paths, so
+# "filecmp-win ./a ./b" works the same as "filecmp ./a ./b".
+#
+# @WIN_DIR@ is replaced by "make install" with the Windows install directory.
+WIN_DIR="@WIN_DIR@"
+
+exe="$WIN_DIR/filecmp-gui.exe"
+gui=1
+if [ "$1" = "--tui" ]; then
+	gui=0
+	exe="$WIN_DIR/filecmp.exe"
+	shift
+fi
+
+if [ ! -x "$exe" ]; then
+	echo "filecmp-win: $exe not found (re-run 'make install')" >&2
+	exit 1
+fi
+
+for arg do
+	shift
+	if [ -e "$arg" ]; then
+		arg=$(wslpath -aw "$arg")
+	fi
+	set -- "$@" "$arg"
+done
+
+if [ "$gui" = 1 ]; then
+	"$exe" "$@" >/dev/null 2>&1 &
+else
+	exec "$exe" "$@"
+fi

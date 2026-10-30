@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Source for appicon.png and windows/icon.ico. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="#1a1b26"/>
+  <g fill="none" stroke="#6d28d9" stroke-width="26" stroke-linejoin="miter">
+    <!-- Cat head: round face with two pointed ears. -->
+    <path d="M512 846
+             C330 846 208 756 208 606
+             C208 520 230 452 262 404
+             L248 196
+             L420 312
+             C450 304 480 300 512 300
+             C544 300 574 304 604 312
+             L776 196
+             L762 404
+             C794 452 816 520 816 606
+             C816 756 694 846 512 846 Z"/>
+  </g>
+  <g fill="none" stroke="#15803d" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
+    <!-- F -->
+    <path d="M451 484 H321 V690 M321 584 H426"/>
+    <!-- C -->
+    <path d="M703 520 C680 496 654 484 624 484 C578 484 551 530 551 587 C551 644 578 690 624 690 C654 690 680 678 703 654"/>
+  </g>
+</svg>

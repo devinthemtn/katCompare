@@ -11,10 +11,16 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// icon is the Linux window icon (Windows uses build/windows/icon.ico).
+//
+//go:embed build/appicon.png
+var icon []byte
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
 var version = "dev"
@@ -45,6 +51,10 @@ func main() {
 		OnStartup:        app.startup,
 		Bind: []interface{}{
 			app,
+		},
+		Linux: &linux.Options{
+			Icon:        icon,
+			ProgramName: "filecmp-gui",
 		},
 	})
 

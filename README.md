@@ -34,6 +34,15 @@ make install BINDIR=~/.local/bin      # or pick another directory on your PATH
 
 This installs `filecmp` (TUI) and `filecmp-gui` (GUI). Use `make install-tui` / `make install-gui` for just one, and `make uninstall` to remove them.
 
+**Under WSL**, `make install` also cross-compiles the Windows builds, installs `filecmp.exe` and `filecmp-gui.exe` to `%LOCALAPPDATA%\Programs\filecmp`, and adds a `filecmp-win` wrapper to `BINDIR`:
+
+```bash
+filecmp-win ./a ./b          # Windows GUI in a native window
+filecmp-win --tui ./a ./b    # Windows TUI in this terminal
+```
+
+The wrapper converts path arguments to Windows paths. Use `make install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `make build-windows` / `make build-gui-windows` just build them (output goes to `build/`).
+
 ### Desktop GUI
 
 Requires Go 1.25+, Node.js, and the [Wails v2 CLI](https://wails.io):

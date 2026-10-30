@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=File Compare
+GenericName=File Comparison
+Comment=Compare files and directories side by side
+Exec=@BIN@ %F
+Icon=@ICON@
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=filecmp-gui
