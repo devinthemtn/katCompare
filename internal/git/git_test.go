@@ -245,3 +245,51 @@ func TestChangedFilesMarksConflicts(t *testing.T) {
 		t.Errorf("ChangedFiles = %+v, want conflict.txt marked conflicted", files)
 	}
 }
+
+// ---- ListRefs ---------------------------------------------------------------
+
+func TestListRefs(t *testing.T) {
+	root := conflictRepo(t)
+	refs, err := ListRefs(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(group, ref string) bool {
+		for _, r := range refs {
+			if r.Group == group && r.Ref == ref {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []struct{ group, ref string }{
+		{GroupCommon, ""},
+		{GroupCommon, "HEAD"},
+		{GroupCommon, "HEAD~1"},
+		{GroupCommon, "MERGE_HEAD"},
+		{GroupBranches, "main"},
+		{GroupBranches, "other"},
+	} {
+		if !has(want.group, want.ref) {
+			t.Errorf("ListRefs missing %s %q; got %+v", want.group, want.ref, refs)
+		}
+	}
+	if has(GroupCommon, "HEAD~3") {
+		t.Error("ListRefs offered HEAD~3 in a repo with only two commits on main")
+	}
+
+	commits := 0
+	for _, r := range refs {
+		if r.Group == GroupCommits {
+			commits++
+		}
+	}
+	if commits != 2 {
+		t.Errorf("got %d commits, want 2", commits)
+	}
+
+	refs, _ = ListRefs(root, false)
+	if refs[0].Ref == "" {
+		t.Error("working tree offered when includeWorkingTree is false")
+	}
+}

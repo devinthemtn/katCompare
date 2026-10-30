@@ -110,6 +110,12 @@ type DiffResult struct {
 	Conflicted    bool `json:"conflicted"`
 }
 
+type GitRefOption struct {
+	Ref   string `json:"ref"` // "" means the working tree
+	Label string `json:"label"`
+	Group string `json:"group"`
+}
+
 type MergeSaveRequest struct {
 	RelPath            string `json:"relPath"`
 	Target             string `json:"target"` // "left" | "right"
@@ -168,6 +174,25 @@ func (a *App) LoadComparison(leftPath, rightPath string) (*ComparisonResult, err
 	}
 
 	return a.buildComparisonResult(), nil
+}
+
+// ListGitRefs returns the refs offered in the Git mode dropdowns: common
+// refs, branches, tags and recent commits of the repository the app runs in.
+// It includes the working tree (Ref "") for the right side to offer.
+func (a *App) ListGitRefs() ([]GitRefOption, error) {
+	root, err := git.FindRoot()
+	if err != nil {
+		return nil, err
+	}
+	refs, err := git.ListRefs(root, true)
+	if err != nil {
+		return nil, err
+	}
+	opts := make([]GitRefOption, len(refs))
+	for i, r := range refs {
+		opts[i] = GitRefOption{Ref: r.Ref, Label: r.Label, Group: r.Group}
+	}
+	return opts, nil
 }
 
 // LoadGitComparison loads a diff between two git refs, or a ref and the

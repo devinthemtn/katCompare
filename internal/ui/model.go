@@ -28,6 +28,7 @@ const (
 	ViewModeMerge
 	ViewModeCopy
 	ViewModeHelp
+	ViewModeGitSelect
 )
 
 // DiffViewMode represents the diff display mode
@@ -92,6 +93,7 @@ type Model struct {
 	inputRight  string
 	focus       fileSelectFocus
 	showingHelp bool
+	helpScroll  int
 	errorMsg    string
 
 	// Path suggestions
@@ -111,6 +113,13 @@ type Model struct {
 	leftRef   string
 	rightRef  string
 	conflicts map[string]bool
+
+	// Git ref picker (ViewModeGitSelect)
+	gitRefs      []git.RefOption
+	gitSelInput  [2]string // left, right; right "" means the working tree
+	gitSelFocus  int       // 0 = left ref, 1 = right ref
+	gitSelIndex  int       // highlighted option in the filtered list, -1 for none
+	gitSelEdited bool      // the focused input was typed in, so filter the list by it
 }
 
 // externalDoneMsg is sent when an external editor, diff tool or merge tool
@@ -295,6 +304,8 @@ func (m *Model) View() string {
 		return m.renderCopyView()
 	case ViewModeHelp:
 		return m.renderHelpView()
+	case ViewModeGitSelect:
+		return m.renderGitSelectView()
 	default:
 		return "Unknown view mode"
 	}
@@ -313,6 +324,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCopyKeys(msg)
 	case ViewModeHelp:
 		return m.handleHelpKeys(msg)
+	case ViewModeGitSelect:
+		return m.handleGitSelectKeys(msg)
 	}
 	return m, nil
 }
@@ -345,6 +358,10 @@ func (m *Model) handleFileSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+
+	case "ctrl+g":
+		m.openGitSelect()
+		return m, nil
 
 	case "tab":
 		// If suggestions are showing and we have suggestions, cycle through them
@@ -1015,7 +1032,20 @@ func (m *Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "up", "k":
+		m.helpScroll = max(0, m.helpScroll-1)
+	case "down", "j":
+		m.helpScroll = min(m.helpMaxScroll(), m.helpScroll+1)
+	case "pgup", "ctrl+u":
+		m.helpScroll = max(0, m.helpScroll-m.helpPageHeight())
+	case "pgdown", "ctrl+d", " ":
+		m.helpScroll = min(m.helpMaxScroll(), m.helpScroll+m.helpPageHeight())
+	case "g", "home":
+		m.helpScroll = 0
+	case "G", "end":
+		m.helpScroll = m.helpMaxScroll()
 	case "esc", "?":
+		m.helpScroll = 0
 		if m.viewMode == ViewModeMerge {
 			m.viewMode = ViewModeMerge
 		} else if m.viewMode == ViewModeCopy {

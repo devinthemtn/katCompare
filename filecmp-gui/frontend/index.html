@@ -44,11 +44,18 @@
         <div class="git-form hidden" id="git-form">
             <div class="path-field">
                 <label>Left ref</label>
-                <input type="text" id="left-ref" placeholder="HEAD" value="HEAD" autocomplete="off"/>
+                <div class="path-input-row">
+                    <input type="text" id="left-ref" placeholder="HEAD" value="HEAD" autocomplete="off"/>
+                    <select class="ref-select" id="left-ref-select" title="Pick a branch, tag or commit"></select>
+                </div>
             </div>
+            <button class="btn btn-icon" id="swap-refs" title="Swap left and right">⇄</button>
             <div class="path-field">
                 <label>Right ref <span class="hint">(blank = working tree)</span></label>
-                <input type="text" id="right-ref" placeholder="working tree" autocomplete="off"/>
+                <div class="path-input-row">
+                    <input type="text" id="right-ref" placeholder="working tree" autocomplete="off"/>
+                    <select class="ref-select" id="right-ref-select" title="Pick a branch, tag or commit"></select>
+                </div>
             </div>
             <button class="btn btn-primary" id="git-compare-btn">Compare</button>
         </div>
@@ -110,7 +117,7 @@
             <div class="modal-body help-body">
                 <section class="help-section">
                     <h3>Getting started</h3>
-                    <p>Pick <b>Files / Directories</b> to compare two paths, or <b>Git</b> to compare two refs
+                    <p>Pick <b>Files / Directories</b> to compare two paths, or <b>Git</b> to compare two refs (type one, or pick a branch, tag or recent commit from the dropdown)
                         (leave the right ref blank to compare against the working tree). Press <b>Compare</b> or
                         <kbd>Enter</kbd>, then choose a file from the list on the left.</p>
                 </section>

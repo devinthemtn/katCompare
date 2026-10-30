@@ -12,6 +12,8 @@ export function GetToolInfo():Promise<main.ToolInfo>;
 
 export function GetVersion():Promise<string>;
 
+export function ListGitRefs():Promise<Array<main.GitRefOption>>;
+
 export function LoadComparison(arg1:string,arg2:string):Promise<main.ComparisonResult>;
 
 export function LoadGitComparison(arg1:string,arg2:string):Promise<main.ComparisonResult>;

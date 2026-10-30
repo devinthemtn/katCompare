@@ -2,6 +2,7 @@ import './style.css';
 import {
     LoadComparison,
     LoadGitComparison,
+    ListGitRefs,
     GetDiff,
     GetInitialPaths,
     SaveMerge,
@@ -51,6 +52,8 @@ const leftPathInput = el('left-path');
 const rightPathInput = el('right-path');
 const leftRefInput = el('left-ref');
 const rightRefInput = el('right-ref');
+const leftRefSelect = el('left-ref-select');
+const rightRefSelect = el('right-ref-select');
 
 const filterInput = el('filter-input');
 const fileListEl = el('file-list');
@@ -75,7 +78,8 @@ function escapeHtml(str) {
     return String(str ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 function debounce(fn, wait) {
@@ -118,7 +122,67 @@ modeTabs.forEach((btn) => {
         modeTabs.forEach((b) => b.classList.toggle('active', b === btn));
         pathsForm.classList.toggle('hidden', state.mode !== 'paths');
         gitForm.classList.toggle('hidden', state.mode !== 'git');
+        if (state.mode === 'git') refreshGitRefs();
     });
+});
+
+// ---------------------------------------------------------------------------
+// Git ref dropdowns
+// ---------------------------------------------------------------------------
+
+// The placeholder option; the working tree uses the real value "".
+const REF_CHOOSE = '__choose__';
+
+// fillRefSelect rebuilds a ref dropdown from the detected refs, one
+// <optgroup> per group. The working tree is only offered on the right.
+function fillRefSelect(selectEl, refs, includeWorkingTree) {
+    let html = `<option value="${REF_CHOOSE}" disabled>Choose…</option>`;
+    let group = null;
+    for (const r of refs) {
+        if (r.ref === '' && !includeWorkingTree) continue;
+        if (r.group !== group) {
+            if (group !== null) html += '</optgroup>';
+            group = r.group;
+            html += `<optgroup label="${escapeHtml(group)}">`;
+        }
+        html += `<option value="${escapeHtml(r.ref)}">${escapeHtml(r.label)}</option>`;
+    }
+    if (group !== null) html += '</optgroup>';
+    selectEl.innerHTML = html;
+}
+
+// syncRefSelect shows the input's ref in its dropdown, or the placeholder
+// when the typed ref isn't one of the options.
+function syncRefSelect(inputEl, selectEl) {
+    const value = inputEl.value.trim();
+    const match = [...selectEl.options].some((o) => o.value === value && !o.disabled);
+    selectEl.value = match ? value : REF_CHOOSE;
+}
+
+async function refreshGitRefs() {
+    let refs = [];
+    try {
+        refs = (await ListGitRefs()) || [];
+    } catch (err) {
+        setStatus(goErrorMessage(err), 'error');
+    }
+    fillRefSelect(leftRefSelect, refs, false);
+    fillRefSelect(rightRefSelect, refs, true);
+    syncRefSelect(leftRefInput, leftRefSelect);
+    syncRefSelect(rightRefInput, rightRefSelect);
+}
+
+[[leftRefInput, leftRefSelect], [rightRefInput, rightRefSelect]].forEach(([inputEl, selectEl]) => {
+    selectEl.addEventListener('change', () => {
+        inputEl.value = selectEl.value;
+    });
+    inputEl.addEventListener('input', () => syncRefSelect(inputEl, selectEl));
+});
+
+el('swap-refs').addEventListener('click', () => {
+    [leftRefInput.value, rightRefInput.value] = [rightRefInput.value, leftRefInput.value];
+    syncRefSelect(leftRefInput, leftRefSelect);
+    syncRefSelect(rightRefInput, rightRefSelect);
 });
 
 // ---------------------------------------------------------------------------

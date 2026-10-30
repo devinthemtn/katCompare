@@ -208,7 +208,7 @@ func (m *Model) renderFileSelectView() string {
 		if len(m.allFiles) > 0 {
 			// When files are loaded, emphasize the comparison functionality
 			if m.windowWidth > 100 {
-				helpText = "Tab: Switch input/View Diff/Quit • Enter: Load path or activate button • ↑↓: Navigate files • Ctrl+D: Compare • /: Filter • ?: Help • Q: Quit"
+				helpText = "Tab: Switch input/View Diff/Quit • Enter: Load path or activate button • ↑↓: Navigate files • Ctrl+D: Compare • Ctrl+G: Git refs • /: Filter • ?: Help • Q: Quit"
 			} else if m.windowWidth > 80 {
 				helpText = "Tab: Switch/Diff/Quit • Enter: Load/Activate • ↑↓: Navigate • Ctrl+D: Compare • /: Filter • ?: Help • Q: Quit"
 			} else if m.windowWidth > 60 {
@@ -219,9 +219,9 @@ func (m *Model) renderFileSelectView() string {
 		} else {
 			// When no files are loaded, emphasize the input functionality
 			if m.windowWidth > 80 {
-				helpText = "Tab: Switch input/Quit button • Enter: Load path • ↑↓: Navigate suggestions • ?: Help • Q: Quit"
+				helpText = "Tab: Switch input/Quit button • Enter: Load path • ↑↓: Navigate suggestions • Ctrl+G: Git refs • ?: Help • Q: Quit"
 			} else if m.windowWidth > 60 {
-				helpText = "Tab: Switch/Quit • Enter: Load • ↑↓: Navigate • ?: Help • Q: Quit"
+				helpText = "Tab: Switch/Quit • Enter: Load • ↑↓: Navigate • Ctrl+G: Git • ?: Help • Q: Quit"
 			} else {
 				helpText = "Tab:Switch Enter:Load ?:Help Q:Quit"
 			}
@@ -557,13 +557,49 @@ func (m *Model) renderDiffContent() string {
 	return b.String()
 }
 
-// renderHelpView renders the help screen
+// renderHelpView renders the help screen: a fixed title and footer around a
+// scrollable window of the help body.
 func (m *Model) renderHelpView() string {
 	var b strings.Builder
 
-	title := titleStyle.Render("Help - File Comparison Tool " + Version)
-	b.WriteString(title)
+	b.WriteString(titleStyle.Render("Help - File Comparison Tool " + Version))
 	b.WriteString("\n\n")
+
+	lines := m.helpLines()
+	start := min(m.helpScroll, m.helpMaxScroll())
+	end := min(start+m.helpPageHeight(), len(lines))
+	b.WriteString(strings.Join(lines[start:end], "\n"))
+	b.WriteString("\n\n")
+
+	footer := fmt.Sprintf("↑/↓ j/k: Scroll • PgUp/PgDn: Page • g/G: Top/Bottom • Esc/?: Back  (%d-%d of %d)",
+		start+1, end, len(lines))
+	b.WriteString(helpStyle.Render(footer))
+
+	return b.String()
+}
+
+// helpPageHeight is the number of help body lines that fit between the
+// title and the footer.
+func (m *Model) helpPageHeight() int {
+	if m.windowHeight == 0 {
+		return len(m.helpLines())
+	}
+	return max(1, m.windowHeight-4)
+}
+
+// helpMaxScroll is the largest useful help scroll offset.
+func (m *Model) helpMaxScroll() int {
+	return max(0, len(m.helpLines())-m.helpPageHeight())
+}
+
+// helpLines returns the help body split into lines.
+func (m *Model) helpLines() []string {
+	return strings.Split(m.renderHelpBody(), "\n")
+}
+
+// renderHelpBody renders the scrollable part of the help screen
+func (m *Model) renderHelpBody() string {
+	var b strings.Builder
 
 	help := `File Selection Mode:
   Tab              Switch between left/right input fields (or cycle suggestions)
@@ -571,8 +607,17 @@ func (m *Model) renderHelpView() string {
   ↑/↓              Navigate through common files list / Navigate suggestions
   Esc              Clear path suggestions
   Ctrl+D           Start comparing selected files
+  Ctrl+G           Compare git refs (branch / commit picker)
   ?                Show this help screen
   Q/Ctrl+C         Quit application
+
+Git Ref Picker (Ctrl+G):
+  Type             Enter any ref, or filter the list of detected refs
+  ↑/↓ PgUp/PgDn    Choose from common refs, branches, tags and recent commits
+  Enter            Accept the chosen ref / Compare when nothing is chosen
+  Tab              Switch between left and right ref
+  Ctrl+U           Clear the ref (right side blank = working tree)
+  Esc              Clear the choice / Back to file selection
 
 Path Suggestions:
   Type any path    Smart suggestions appear automatically
@@ -728,8 +773,6 @@ File Comparison Notes:
 - Path suggestions include files and directories from your current working directory`
 
 	b.WriteString(instructions)
-	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("Press Esc or ? to return to previous view"))
 
 	return b.String()
 }

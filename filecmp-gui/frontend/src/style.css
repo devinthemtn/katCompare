@@ -147,6 +147,22 @@ input#left-path, input#right-path, input#left-ref, input#right-ref, input#filter
     outline: none;
 }
 
+select.ref-select {
+    width: 150px;
+    flex-shrink: 0;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+}
+
+select.ref-select:focus {
+    border-color: var(--accent);
+}
+
 input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right-ref:focus, input#filter-input:focus {
     border-color: var(--accent);
 }

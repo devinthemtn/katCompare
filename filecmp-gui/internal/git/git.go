@@ -126,3 +126,116 @@ func ReadWorkingTreeFile(root, path string) (string, error) {
 	}
 	return string(data), nil
 }
+
+// RefOption is one choice in a ref picker.
+type RefOption struct {
+	Ref   string // value passed to git; "" means the working tree
+	Label string // text shown to the user
+	Group string // "Common", "Branches", "Remote branches", "Tags" or "Commits"
+}
+
+// Ref picker groups, in display order.
+const (
+	GroupCommon   = "Common"
+	GroupBranches = "Branches"
+	GroupRemotes  = "Remote branches"
+	GroupTags     = "Tags"
+	GroupCommits  = "Commits"
+)
+
+// maxRefsPerGroup caps tags and commits so the picker stays usable on large repos.
+const maxRefsPerGroup = 30
+
+// ListRefs returns the refs worth offering in a picker: common relative refs
+// (plus the working tree when includeWorkingTree is set), local and remote
+// branches by most recent commit, recent tags and recent commits on HEAD.
+func ListRefs(root string, includeWorkingTree bool) ([]RefOption, error) {
+	if _, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", "HEAD").Output(); err != nil {
+		return nil, fmt.Errorf("repository has no commits yet")
+	}
+
+	var refs []RefOption
+	add := func(group, ref, label string) {
+		refs = append(refs, RefOption{Ref: ref, Label: label, Group: group})
+	}
+
+	if includeWorkingTree {
+		add(GroupCommon, "", "working tree (uncommitted changes)")
+	}
+	add(GroupCommon, "HEAD", "HEAD (last commit)")
+	for i := 1; i <= 3; i++ {
+		ref := fmt.Sprintf("HEAD~%d", i)
+		if refExists(root, ref) {
+			add(GroupCommon, ref, fmt.Sprintf("%s (%d commit%s back)", ref, i, plural(i)))
+		}
+	}
+	if refExists(root, "@{upstream}") {
+		add(GroupCommon, "@{upstream}", "@{upstream} (tracking branch)")
+	}
+	if refExists(root, "MERGE_HEAD") {
+		add(GroupCommon, "MERGE_HEAD", "MERGE_HEAD (branch being merged)")
+	}
+
+	current := gitLines(root, "branch", "--show-current")
+	for _, b := range gitLines(root, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname:short)", "refs/heads") {
+		label := b
+		if len(current) > 0 && b == current[0] {
+			label += " (current)"
+		}
+		add(GroupBranches, b, label)
+	}
+	for _, b := range gitLines(root, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname:short)", "refs/remotes") {
+		// Skip symbolic "origin/HEAD" entries (shown as just "origin")
+		if !strings.Contains(b, "/") || strings.HasSuffix(b, "/HEAD") {
+			continue
+		}
+		add(GroupRemotes, b, b)
+	}
+	for i, t := range gitLines(root, "for-each-ref", "--sort=-creatordate",
+		"--format=%(refname:short)", "refs/tags") {
+		if i >= maxRefsPerGroup {
+			break
+		}
+		add(GroupTags, t, t)
+	}
+	for _, line := range gitLines(root, "log", fmt.Sprintf("-n%d", maxRefsPerGroup),
+		"--format=%h%x09%s%x09%cr") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		add(GroupCommits, parts[0], fmt.Sprintf("%s  %s (%s)", parts[0], parts[1], parts[2]))
+	}
+
+	return refs, nil
+}
+
+// refExists reports whether ref resolves to a commit.
+func refExists(root, ref string) bool {
+	return exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", ref+"^{commit}").Run() == nil
+}
+
+// gitLines runs git in root and returns its non-empty output lines,
+// or nil if the command fails.
+func gitLines(root string, args ...string) []string {
+	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}

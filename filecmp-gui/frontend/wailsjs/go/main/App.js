@@ -22,6 +22,10 @@ export function GetVersion() {
   return window['go']['main']['App']['GetVersion']();
 }
 
+export function ListGitRefs() {
+  return window['go']['main']['App']['ListGitRefs']();
+}
+
 export function LoadComparison(arg1, arg2) {
   return window['go']['main']['App']['LoadComparison'](arg1, arg2);
 }
