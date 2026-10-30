@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"golang-fileCmp/internal/proc"
 )
 
 // NoDiffToolHint is shown when no diff tool is configured or detected.
@@ -173,7 +175,7 @@ func gitConfigGet(dir, key string) string {
 	if !hasGit() {
 		return ""
 	}
-	cmd := exec.Command("git", "config", "--get", key)
+	cmd := proc.Command("git", "config", "--get", key)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
