@@ -394,3 +394,41 @@ func TestMergeToolNoneConfigured(t *testing.T) {
 		t.Error("expected setup hint error")
 	}
 }
+
+func TestAutodetectZedAndEmacsInGUI(t *testing.T) {
+	isolate(t)
+	fakePath(t, false, "zed", "nvim")
+	left, right := tempFiles(t)
+
+	cmd, err := DiffToolCommand(DiffRequest{LeftPath: left, RightPath: right}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cmd.Args, []string{"zed", "--wait", "--diff", left, right}) {
+		t.Errorf("args = %v", cmd.Args)
+	}
+
+	fakePath(t, false, "emacs", "nvim")
+	cmd, err = DiffToolCommand(DiffRequest{LeftPath: left, RightPath: right}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Args[0] != "emacs" {
+		t.Errorf("args = %v, want emacs", cmd.Args)
+	}
+}
+
+func TestGitDiffAutodetectedZedUsesExtcmd(t *testing.T) {
+	isolate(t)
+	fakePath(t, true, "zed")
+	repo := t.TempDir()
+
+	cmd, err := DiffToolCommand(DiffRequest{GitRoot: repo, LeftRef: "HEAD", RelPath: "x"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"git", "-C", repo, "difftool", "-y", "--extcmd=zed --wait --diff", "HEAD", "--", "x"}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Errorf("args = %v, want %v", cmd.Args, want)
+	}
+}

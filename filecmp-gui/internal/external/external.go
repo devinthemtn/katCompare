@@ -120,6 +120,7 @@ type knownTool struct {
 	argv     []string // program and leading args; left/right paths are appended
 	terminal bool     // needs a terminal
 	dirs     bool     // can compare whole directories
+	extcmd   bool     // not a git builtin; git mode passes argv via --extcmd
 }
 
 // knownTools maps git's tool names to direct launch commands.
@@ -127,6 +128,7 @@ var knownTools = map[string]knownTool{
 	"meld":     {argv: []string{"meld"}, dirs: true},
 	"kdiff3":   {argv: []string{"kdiff3"}, dirs: true},
 	"vscode":   {argv: []string{"code", "--wait", "--diff"}},
+	"zed":      {argv: []string{"zed", "--wait", "--diff"}, dirs: true, extcmd: true},
 	"gvimdiff": {argv: []string{"gvim", "-d"}},
 	"nvimdiff": {argv: []string{"nvim", "-d"}, terminal: true},
 	"vimdiff":  {argv: []string{"vim", "-d"}, terminal: true},
@@ -138,7 +140,7 @@ var knownTools = map[string]knownTool{
 }
 
 // autodetectOrder lists tools tried, in order, when none is configured.
-var autodetectOrder = []string{"meld", "kdiff3", "vscode", "nvimdiff", "vimdiff"}
+var autodetectOrder = []string{"meld", "kdiff3", "vscode", "zed", "emerge", "nvimdiff", "vimdiff"}
 
 // hasGit reports whether git is on PATH.
 func hasGit() bool {
@@ -235,11 +237,15 @@ func gitDiffToolCommand(req DiffRequest, gui bool) (*exec.Cmd, error) {
 	if !hasGit() {
 		return nil, fmt.Errorf("git is not installed")
 	}
-	name, _ := resolveTool(req.GitRoot, "diff", gui)
+	name, configured := resolveTool(req.GitRoot, "diff", gui)
 	if name == "" {
 		return nil, fmt.Errorf(NoDiffToolHint)
 	}
-	args := []string{"-C", req.GitRoot, "difftool", "-y", "--tool=" + name, req.LeftRef}
+	toolArg := "--tool=" + name
+	if t, ok := knownTools[name]; ok && t.extcmd && !configured {
+		toolArg = "--extcmd=" + strings.Join(t.argv, " ")
+	}
+	args := []string{"-C", req.GitRoot, "difftool", "-y", toolArg, req.LeftRef}
 	if req.RightRef != "" {
 		args = append(args, req.RightRef)
 	}
