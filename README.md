@@ -23,6 +23,11 @@ File Compare is a fast, color-coded diff and merge tool written in Go that is cl
 
 ## Quick Start
 
+### Download
+
+- **Windows:** [**Download the installer**](https://github.com/devinthemtn/fileCmp-golang-wails/releases/latest/download/filecmp-gui-windows-amd64-installer.exe) and double-click it. It installs File Compare for your user only, so you don't need admin rights, and adds Start menu and desktop shortcuts. The installer is unsigned, so Windows SmartScreen will ask you to click *More info → Run anyway*.
+- **Other platforms:** the Linux GUI, the portable Windows GUI, and the terminal UI for Linux, macOS and Windows are on the [Releases page](https://github.com/devinthemtn/fileCmp-golang-wails/releases/latest).
+
 ### Build and install both in one step
 
 From the repository root (needs the GUI prerequisites below):
