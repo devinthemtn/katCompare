@@ -244,6 +244,7 @@ func (m *Model) renderFileList() string {
 	leftOnlyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#0066FF")).Bold(true)  // Blue
 	rightOnlyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Bold(true) // Orange
 	sizeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))                 // Gray
+	conflictStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Bold(true)  // Yellow
 
 	// Calculate available space for file list
 	usedHeight := 15 // Approximate height used by title, inputs, status, help
@@ -349,6 +350,10 @@ func (m *Model) renderFileList() string {
 			sizeInfo = sizeStyle.Render(fmt.Sprintf("(%s)", formatFileSize(rightFile.Size)))
 			sourceInfo = rightOnlyStyle.Render(" [RIGHT ONLY]")
 		}
+		if m.conflicts[relPath] {
+			statusIndicator = conflictStyle.Render("⚠")
+			sourceInfo += conflictStyle.Render(" [CONFLICT]")
+		}
 
 		// Truncate filename if too long.
 		// Use lipgloss.Width to measure rendered strings — len() counts ANSI escape bytes too.
@@ -430,6 +435,9 @@ func (m *Model) renderDiffView() string {
 	}
 
 	header := fmt.Sprintf("%s vs %s%s", leftFile, rightFile, viewModeIndicator)
+	if m.conflicts[m.selectedFile] {
+		header += " [CONFLICT — R: resolve]"
+	}
 	b.WriteString(headerStyle.Width(m.windowWidth).Render(header))
 	b.WriteString("\n\n")
 
@@ -443,6 +451,10 @@ func (m *Model) renderDiffView() string {
 	}
 	b.WriteString(helpStyle.Width(m.windowWidth).Render(stats))
 	b.WriteString("\n\n")
+	if m.errorMsg != "" {
+		b.WriteString(errorStyle.Render(m.errorMsg))
+		b.WriteString("\n\n")
+	}
 
 	// Diff content based on view mode
 	if m.diffViewMode == DiffViewSideBySide {
@@ -456,7 +468,7 @@ func (m *Model) renderDiffView() string {
 	var helpText string
 	if m.diffViewMode == DiffViewSideBySide {
 		if m.windowWidth > 80 {
-			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • g/G: Top/Bottom • s: Switch view • n/p: Next/Prev file • m: Merge • Esc: Back • ?: Help • Q: Quit"
+			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • g/G: Top/Bottom • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
 		} else if m.windowWidth > 60 {
 			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
 		} else {
@@ -464,7 +476,7 @@ func (m *Model) renderDiffView() string {
 		}
 	} else {
 		if m.windowWidth > 80 {
-			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • s: Switch view • n/p: Next/Prev file • m: Merge • Esc: Back • ?: Help • Q: Quit"
+			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
 		} else if m.windowWidth > 60 {
 			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
 		} else {
@@ -578,6 +590,10 @@ Diff View Mode:
   p                Previous common file
   m                Enter merge mode
   c                Enter copy mode (for unique files)
+  e                Edit the right (or working tree) file at the cursor line
+  E                Edit the left file at the cursor line
+  D                Open the file pair in your external diff tool
+  R                Resolve a git conflict with git mergetool
   Esc              Return to file selection
   ?                Show this help screen
   Q/Ctrl+C         Quit application
@@ -592,9 +608,17 @@ Side-by-Side View Mode:
   p                Previous common file
   m                Enter merge mode
   c                Enter copy mode (for unique files)
+  e                Edit the right (or working tree) file at the cursor line
+  E                Edit the left file at the cursor line
+  D                Open the file pair in your external diff tool
+  R                Resolve a git conflict with git mergetool
   Esc              Return to file selection
   ?                Show this help screen
   Q/Ctrl+C         Quit application
+
+External Tools:
+  Editor           $FILECMP_EDITOR, then $VISUAL, then $EDITOR, then the OS default
+  Diff/merge tool  git config diff.tool / merge.tool (e.g. meld, kdiff3, nvimdiff)
 
 Merge Mode:
   ↑/↓ or j/k       Navigate through diff lines

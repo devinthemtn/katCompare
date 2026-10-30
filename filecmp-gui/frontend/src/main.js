@@ -9,7 +9,13 @@ import {
     SelectDirectory,
     SelectFile,
     SuggestPaths,
+    GetToolInfo,
+    OpenInEditor,
+    OpenInDiffTool,
+    OpenDirsInDiffTool,
+    ResolveConflict,
 } from '../wailsjs/go/main/App';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // ---------------------------------------------------------------------------
 // State
@@ -26,6 +32,8 @@ const state = {
     mergeSelection: { insertions: new Set(), deletions: new Set() },
     copyTarget: 'to-right', // 'to-right' | 'to-left'
     copySelection: new Set(),
+    lastLoad: null, // { git: bool, left, right } — to reload after external changes
+    toolInfo: null, // ToolInfo from the backend
 };
 
 // ---------------------------------------------------------------------------
@@ -252,6 +260,25 @@ async function runComparison(promise) {
     }
 }
 
+function loadPaths(left, right) {
+    state.lastLoad = { git: false, left, right };
+    return runComparison(LoadComparison(left, right));
+}
+
+function loadGit(leftRef, rightRef) {
+    state.lastLoad = { git: true, left: leftRef, right: rightRef };
+    return runComparison(LoadGitComparison(leftRef, rightRef));
+}
+
+// reloadComparison re-runs the last comparison, e.g. after a file was edited
+// or a conflict resolved in an external tool.
+function reloadComparison() {
+    const last = state.lastLoad;
+    if (!last) return;
+    if (last.git) loadGit(last.left, last.right);
+    else loadPaths(last.left, last.right);
+}
+
 el('compare-btn').addEventListener('click', () => {
     const left = leftPathInput.value.trim();
     const right = rightPathInput.value.trim();
@@ -259,13 +286,13 @@ el('compare-btn').addEventListener('click', () => {
         setStatus('Enter both a left and right path first.', 'error');
         return;
     }
-    runComparison(LoadComparison(left, right));
+    loadPaths(left, right);
 });
 
 el('git-compare-btn').addEventListener('click', () => {
     const leftRef = leftRefInput.value.trim() || 'HEAD';
     const rightRef = rightRefInput.value.trim();
-    runComparison(LoadGitComparison(leftRef, rightRef));
+    loadGit(leftRef, rightRef);
 });
 
 [leftPathInput, rightPathInput].forEach((input) => {
@@ -310,6 +337,7 @@ filterInput.addEventListener('input', () => {
 });
 
 function iconFor(entry) {
+    if (entry.conflicted) return '<span class="icon icon-conflict">⚠</span>';
     switch (entry.source) {
         case 'both':
             return entry.identical
@@ -325,6 +353,7 @@ function iconFor(entry) {
 }
 
 function badgeFor(entry) {
+    if (entry.conflicted) return '<span class="badge badge-conflict">conflict</span>';
     if (entry.source === 'left') return '<span class="badge badge-left">left only</span>';
     if (entry.source === 'right') return '<span class="badge badge-right">right only</span>';
     return '';
@@ -421,6 +450,7 @@ function renderContentHeader() {
             <span class="stat-delete">-${diff.deleted}</span>
         </div>
         <div class="content-actions">
+            ${externalActionsHtml(diff)}
             <div class="segmented" id="view-toggle">
                 <button class="segmented-btn${state.diffView === 'unified' ? ' active' : ''}" data-view="unified">Unified</button>
                 <button class="segmented-btn${state.diffView === 'sidebyside' ? ' active' : ''}" data-view="sidebyside">Side-by-side</button>
@@ -437,6 +467,118 @@ function renderContentHeader() {
             renderContentBody();
         });
     });
+
+    contentHeaderEl.querySelectorAll('[data-open-side]').forEach((btn) => {
+        btn.addEventListener('click', () => openInEditor(btn.dataset.openSide, 0));
+    });
+    el('external-diff-btn')?.addEventListener('click', openInDiffTool);
+    el('dir-diff-btn')?.addEventListener('click', openDirsInDiffTool);
+    el('resolve-conflict-btn')?.addEventListener('click', resolveConflict);
+}
+
+// ---------------------------------------------------------------------------
+// External tools (editor, diff tool, merge tool)
+// ---------------------------------------------------------------------------
+
+function externalActionsHtml(diff) {
+    const info = state.toolInfo || {};
+    const noDiffTool = 'No diff tool found — run: git config --global diff.tool meld';
+    const buttons = [];
+    if (state.comparison?.gitMode) {
+        if (diff.rightEditable) {
+            buttons.push(`<button class="btn btn-ghost btn-small" data-open-side="right" title="Open the working-tree file in your editor (e)">Open working copy</button>`);
+        }
+    } else {
+        if (diff.leftEditable) {
+            buttons.push(`<button class="btn btn-ghost btn-small" data-open-side="left" title="Open the left file in your editor">Open left</button>`);
+        }
+        if (diff.rightEditable) {
+            buttons.push(`<button class="btn btn-ghost btn-small" data-open-side="right" title="Open the right file in your editor (e)">Open right</button>`);
+        }
+    }
+    buttons.push(`<button class="btn btn-ghost btn-small" id="external-diff-btn" title="${info.diffToolConfigured ? 'Open this file pair in your diff tool (d)' : noDiffTool}">External diff</button>`);
+    if (state.comparison?.dirs && info.canDirDiff) {
+        buttons.push(`<button class="btn btn-ghost btn-small" id="dir-diff-btn" title="Open both folders in your diff tool">Folders in diff tool</button>`);
+    }
+    if (diff.conflicted) {
+        buttons.push(`<button class="btn btn-primary btn-small" id="resolve-conflict-btn" title="Resolve with git mergetool">Resolve conflict</button>`);
+    }
+    return `<div class="external-actions">${buttons.join('')}</div>`;
+}
+
+// defaultEditSide is the side opened by the `e` shortcut: the right (newer /
+// working) side when it's a real file, else the left.
+function defaultEditSide(diff) {
+    if (diff.rightEditable) return 'right';
+    if (diff.leftEditable) return 'left';
+    return null;
+}
+
+async function openInEditor(side, line) {
+    const diff = state.diff;
+    if (!diff || !side) return;
+    try {
+        await OpenInEditor(diff.relPath, side, line || 0);
+        setStatus(`Opened ${side} side in editor${line ? ` at line ${line}` : ''}.`, 'success');
+    } catch (err) {
+        setStatus(goErrorMessage(err), 'error');
+    }
+}
+
+async function openInDiffTool() {
+    const diff = state.diff;
+    if (!diff) return;
+    try {
+        await OpenInDiffTool(diff.relPath);
+        setStatus('Opened in external diff tool.', 'success');
+    } catch (err) {
+        setStatus(goErrorMessage(err), 'error');
+    }
+}
+
+async function openDirsInDiffTool() {
+    try {
+        await OpenDirsInDiffTool();
+        setStatus('Opened both folders in external diff tool.', 'success');
+    } catch (err) {
+        setStatus(goErrorMessage(err), 'error');
+    }
+}
+
+async function resolveConflict() {
+    const diff = state.diff;
+    if (!diff) return;
+    try {
+        await ResolveConflict(diff.relPath);
+        setStatus(`Resolving ${diff.displayName} in merge tool… the list reloads when it closes.`);
+    } catch (err) {
+        setStatus(goErrorMessage(err), 'error');
+    }
+}
+
+EventsOn('conflict-resolved', (relPath, errMsg) => {
+    if (errMsg) setStatus(`Merge tool exited: ${errMsg}`, 'error');
+    else setStatus(`Merge tool finished for ${relPath}.`, 'success');
+    reloadComparison();
+});
+
+// Clicking a line number opens that side in the editor at that line.
+contentBodyEl.addEventListener('click', (e) => {
+    const ln = e.target.closest('.ln[data-line]');
+    if (!ln || !state.diff) return;
+    const side = ln.dataset.side;
+    if ((side === 'left' && !state.diff.leftEditable) || (side === 'right' && !state.diff.rightEditable)) return;
+    openInEditor(side, Number(ln.dataset.line));
+});
+
+// lnAttrs returns attributes that make a line number clickable when that
+// side can be opened in the editor.
+function lnAttrs(side, lineNum) {
+    const diff = state.diff;
+    if (!diff || lineNum <= 0) return '';
+    const editable = side === 'left' ? diff.leftEditable : diff.rightEditable;
+    if (!editable) return '';
+    return ` data-side="${side}" data-line="${lineNum}" title="Open in editor at line ${lineNum}"`;
 }
 
 function renderContentBody() {
@@ -462,8 +604,8 @@ function renderUnified(diff) {
             const leftNum = line.leftLineNum > 0 ? line.leftLineNum : '';
             const rightNum = line.rightLineNum > 0 ? line.rightLineNum : '';
             return `<div class="diff-line ${line.type}">
-                <span class="ln">${leftNum}</span>
-                <span class="ln ln-right">${rightNum}</span>
+                <span class="ln"${lnAttrs('left', line.leftLineNum)}>${leftNum}</span>
+                <span class="ln ln-right"${lnAttrs('right', line.rightLineNum)}>${rightNum}</span>
                 <span class="marker">${markerFor(line.type)}</span>
                 <span class="content">${escapeHtml(line.content)}</span>
             </div>`;
@@ -471,13 +613,13 @@ function renderUnified(diff) {
         .join('');
 }
 
-function sbsCell(content, lineNum, cls) {
+function sbsCell(content, lineNum, cls, side) {
     if (cls === 'empty') {
         return `<div class="sbs-cell empty"></div>`;
     }
     return `<div class="sbs-cell ${cls}">
         <div class="sbs-cell-inner">
-            <span class="ln">${lineNum > 0 ? lineNum : ''}</span>
+            <span class="ln"${lnAttrs(side, lineNum)}>${lineNum > 0 ? lineNum : ''}</span>
             <span class="content">${escapeHtml(content)}</span>
         </div>
     </div>`;
@@ -506,8 +648,8 @@ function renderSideBySide(diff) {
                     rightCls = '';
             }
             return `<div class="sbs-row">
-                ${sbsCell(row.leftContent, row.leftLineNum, leftCls)}
-                ${sbsCell(row.rightContent, row.rightLineNum, rightCls)}
+                ${sbsCell(row.leftContent, row.leftLineNum, leftCls, 'left')}
+                ${sbsCell(row.rightContent, row.rightLineNum, rightCls, 'right')}
             </div>`;
         })
         .join('')}</div>`;
@@ -718,8 +860,7 @@ el('copy-execute-btn').addEventListener('click', async () => {
         closeCopyModal();
         setStatus(msg, 'success');
         // Refresh the comparison so copied files now show as identical/common.
-        const result = await LoadComparison(state.comparison.leftLabel, state.comparison.rightLabel);
-        applyComparisonResult(result);
+        reloadComparison();
     } catch (err) {
         setStatus(goErrorMessage(err), 'error');
     }
@@ -728,7 +869,15 @@ el('copy-execute-btn').addEventListener('click', async () => {
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !copyModal.classList.contains('hidden')) {
         closeCopyModal();
+        return;
     }
+    // Single-key shortcuts, ignored while typing or with a modal open.
+    const t = e.target;
+    if (t.closest?.('input, textarea, select, [contenteditable]')) return;
+    if (!copyModal.classList.contains('hidden') || !state.diff) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'e') openInEditor(defaultEditSide(state.diff), 0);
+    else if (e.key === 'd') openInDiffTool();
 });
 
 // ---------------------------------------------------------------------------
@@ -737,12 +886,19 @@ document.addEventListener('keydown', (e) => {
 
 renderContentHeader();
 
+GetToolInfo()
+    .then((info) => {
+        state.toolInfo = info;
+        if (state.diff) renderContentHeader();
+    })
+    .catch(() => {});
+
 // Pre-fill paths passed on the command line, and compare if both were given.
 GetInitialPaths()
     .then((paths) => {
         const [left, right] = paths || [];
         if (left) leftPathInput.value = left;
         if (right) rightPathInput.value = right;
-        if (left && right) runComparison(LoadComparison(left, right));
+        if (left && right) loadPaths(left, right);
     })
     .catch((err) => setStatus(goErrorMessage(err), 'error'));

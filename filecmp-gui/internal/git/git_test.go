@@ -192,3 +192,56 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// ---- Conflicts --------------------------------------------------------------
+
+// conflictRepo creates a temp repo with a merge conflict in conflict.txt.
+func conflictRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		cmd.Run() //nolint:errcheck // the merge is expected to fail
+	}
+	write := func(content string) {
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	write("base\n")
+	run("add", ".")
+	run("commit", "-qm", "base")
+	run("checkout", "-qb", "other")
+	write("other\n")
+	run("commit", "-qam", "other")
+	run("checkout", "-q", "main")
+	write("main\n")
+	run("commit", "-qam", "main")
+	run("merge", "-q", "other")
+	return dir
+}
+
+func TestConflictedFiles(t *testing.T) {
+	root := conflictRepo(t)
+	files, err := ConflictedFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "conflict.txt" {
+		t.Errorf("ConflictedFiles = %v, want [conflict.txt]", files)
+	}
+}
+
+func TestChangedFilesMarksConflicts(t *testing.T) {
+	root := conflictRepo(t)
+	files, err := ChangedFiles(root, "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "conflict.txt" || !files[0].Conflicted || files[0].Status != 'M' {
+		t.Errorf("ChangedFiles = %+v, want conflict.txt marked conflicted", files)
+	}
+}

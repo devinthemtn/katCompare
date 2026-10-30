@@ -8,9 +8,19 @@ export function GetDiff(arg1:string):Promise<main.DiffResult>;
 
 export function GetInitialPaths():Promise<Array<string>>;
 
+export function GetToolInfo():Promise<main.ToolInfo>;
+
 export function LoadComparison(arg1:string,arg2:string):Promise<main.ComparisonResult>;
 
 export function LoadGitComparison(arg1:string,arg2:string):Promise<main.ComparisonResult>;
+
+export function OpenDirsInDiffTool():Promise<void>;
+
+export function OpenInDiffTool(arg1:string):Promise<void>;
+
+export function OpenInEditor(arg1:string,arg2:string,arg3:number):Promise<void>;
+
+export function ResolveConflict(arg1:string):Promise<void>;
 
 export function SaveMerge(arg1:main.MergeSaveRequest):Promise<string>;
 

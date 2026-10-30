@@ -1,13 +1,16 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"golang-fileCmp/internal/differ"
+	"golang-fileCmp/internal/external"
 	"golang-fileCmp/internal/file"
 	"golang-fileCmp/internal/git"
 	"golang-fileCmp/internal/merge"
@@ -101,6 +104,20 @@ type Model struct {
 	// File list filter
 	filterQuery string
 	filterActive bool
+
+	// Git comparison (for reloading and launching git difftool/mergetool)
+	gitMode   bool
+	gitRoot   string
+	leftRef   string
+	rightRef  string
+	conflicts map[string]bool
+}
+
+// externalDoneMsg is sent when an external editor, diff tool or merge tool
+// launched with tea.ExecProcess exits.
+type externalDoneMsg struct {
+	kind string // "edit" | "diff" | "merge"
+	err  error
 }
 
 // Styles for the UI
@@ -247,6 +264,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
+
+	case externalDoneMsg:
+		m.handleExternalDone(msg)
+		return m, nil
 	}
 
 	return m, nil
@@ -528,6 +549,7 @@ func (m *Model) handleFileSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleDiffKeys handles keys in diff view mode
 func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.errorMsg = "" // errors are shown until the next key press
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -637,9 +659,199 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.viewMode = ViewModeCopy
 		}
 		return m, nil
+
+	case "e":
+		// Edit the right (newer / working tree) side, or the only real side
+		side := "right"
+		if m.editablePath(side) == "" {
+			side = "left"
+		}
+		return m, m.openInEditor(side)
+
+	case "E":
+		return m, m.openInEditor("left")
+
+	case "D":
+		return m, m.openInDiffTool()
+
+	case "R":
+		return m, m.resolveConflict()
 	}
 
 	return m, nil
+}
+
+// ---- External tools ---------------------------------------------------------
+
+// editablePath returns the on-disk path for one side of the selected file, or
+// "" when that side is missing or isn't a real file (a git ref, or the
+// working tree path when comparing ref to ref).
+func (m *Model) editablePath(side string) string {
+	comp, ok := m.allFiles[m.selectedFile]
+	if !ok {
+		return ""
+	}
+	f := comp.RightFile
+	if side == "left" {
+		f = comp.LeftFile
+	}
+	if f == nil || strings.HasPrefix(f.Path, "git:") {
+		return ""
+	}
+	if m.gitMode && (side == "left" || m.rightRef != "") {
+		return ""
+	}
+	return f.Path
+}
+
+// cursorLineFor returns the line number on side under the diff cursor,
+// looking at nearby lines when the cursor is on a line that only exists on
+// the other side. Returns 0 if there is none.
+func (m *Model) cursorLineFor(side string) int {
+	var nums []int
+	if m.diffViewMode == DiffViewSideBySide {
+		for _, r := range m.sbsRows {
+			if side == "left" {
+				nums = append(nums, r.LeftLineNum)
+			} else {
+				nums = append(nums, r.RightLineNum)
+			}
+		}
+	} else if m.currentDiff != nil {
+		for _, l := range m.currentDiff.Lines {
+			if side == "left" {
+				nums = append(nums, l.LeftLineNum)
+			} else {
+				nums = append(nums, l.RightLineNum)
+			}
+		}
+	}
+	for i := m.cursor; i < len(nums); i++ {
+		if i >= 0 && nums[i] > 0 {
+			return nums[i]
+		}
+	}
+	for i := m.cursor - 1; i >= 0 && i < len(nums); i-- {
+		if nums[i] > 0 {
+			return nums[i]
+		}
+	}
+	return 0
+}
+
+// runExternal suspends the TUI while cmd runs, so terminal editors and
+// tools like nvimdiff can take over the screen.
+func runExternal(kind string, cmd *exec.Cmd) tea.Cmd {
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return externalDoneMsg{kind: kind, err: err}
+	})
+}
+
+func (m *Model) openInEditor(side string) tea.Cmd {
+	path := m.editablePath(side)
+	if path == "" {
+		m.errorMsg = fmt.Sprintf("The %s side isn't a file on disk", side)
+		return nil
+	}
+	cmd, err := external.EditorCommand(path, m.cursorLineFor(side), false)
+	if err != nil {
+		m.errorMsg = err.Error()
+		return nil
+	}
+	return runExternal("edit", cmd)
+}
+
+func (m *Model) openInDiffTool() tea.Cmd {
+	comp, ok := m.allFiles[m.selectedFile]
+	if !ok {
+		return nil
+	}
+	req := external.DiffRequest{}
+	if m.gitMode {
+		req.GitRoot = m.gitRoot
+		req.LeftRef = m.leftRef
+		req.RightRef = m.rightRef
+		req.RelPath = m.selectedFile
+	} else {
+		// Plain files: passed straight to the tool, no git repo needed
+		if comp.LeftFile != nil {
+			req.LeftPath = comp.LeftFile.Path
+		}
+		if comp.RightFile != nil {
+			req.RightPath = comp.RightFile.Path
+		}
+	}
+	cmd, err := external.DiffToolCommand(req, false)
+	if err != nil {
+		m.errorMsg = err.Error()
+		return nil
+	}
+	return runExternal("diff", cmd)
+}
+
+func (m *Model) resolveConflict() tea.Cmd {
+	if !m.gitMode || !m.conflicts[m.selectedFile] {
+		m.errorMsg = "This file has no merge conflicts"
+		return nil
+	}
+	cmd, err := external.MergeToolCommand(m.gitRoot, m.selectedFile, false)
+	if err != nil {
+		m.errorMsg = err.Error()
+		return nil
+	}
+	return runExternal("merge", cmd)
+}
+
+// handleExternalDone reports a tool's result and reloads, since the tool may
+// have changed files on disk.
+func (m *Model) handleExternalDone(msg externalDoneMsg) {
+	errText := ""
+	if msg.err != nil {
+		var exitErr *exec.ExitError
+		// git difftool --no-index exits 1 when the files differ, like diff
+		if !(msg.kind == "diff" && errors.As(msg.err, &exitErr) && exitErr.ExitCode() == 1) {
+			errText = msg.err.Error()
+		}
+	}
+	if msg.kind != "diff" {
+		m.reloadComparison()
+	}
+	switch {
+	case errText != "" && msg.kind == "merge":
+		m.errorMsg = "Merge tool exited without resolving: " + errText
+	case errText != "":
+		m.errorMsg = fmt.Sprintf("External %s tool failed: %s", msg.kind, errText)
+	}
+}
+
+// reloadComparison re-reads the compared files from disk (or git), keeping
+// the selected file and diff position where possible.
+func (m *Model) reloadComparison() {
+	selected := m.selectedFile
+	cursor, scroll, hScroll := m.cursor, m.scrollOffset, m.hScrollOffset
+
+	if m.gitMode {
+		if err := m.LoadGitComparison(m.leftRef, m.rightRef); err != nil {
+			m.errorMsg = err.Error()
+			m.viewMode = ViewModeFileSelect
+			return
+		}
+	} else {
+		m.loadLeftPath()
+		m.loadRightPath()
+		m.updateCommonFiles()
+	}
+	if _, ok := m.allFiles[selected]; ok {
+		m.selectedFile = selected
+	}
+	if m.viewMode == ViewModeDiff && m.selectedFile != "" {
+		m.loadDiff()
+		maxLines := m.maxDiffLines()
+		if cursor >= maxLines {
+			cursor = max(0, maxLines-1)
+		}
+		m.cursor, m.scrollOffset, m.hScrollOffset = cursor, min(scroll, cursor), hScroll
+	}
 }
 
 // handleMergeKeys handles keys in merge view mode
@@ -839,6 +1051,8 @@ func (m *Model) loadRightPath() {
 
 func (m *Model) updateCommonFiles() {
 	if m.leftFile != nil && m.rightFile != nil {
+		m.gitMode = false
+		m.conflicts = nil
 		m.commonFiles = file.FindCommonFiles(m.leftFile, m.rightFile)
 		m.allFiles = file.FindAllFiles(m.leftFile, m.rightFile)
 		m.fileListScroll = 0 // Reset scroll when files change
@@ -994,7 +1208,16 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 	m.commonFiles = make(map[string][2]*file.FileInfo)
 	m.selectedFile = ""
 
+	m.gitMode = true
+	m.gitRoot = root
+	m.leftRef = leftRef
+	m.rightRef = rightRef
+	m.conflicts = make(map[string]bool)
+
 	for _, fs := range statuses {
+		if fs.Conflicted {
+			m.conflicts[fs.Path] = true
+		}
 		comparison := &file.FileComparison{RelativePath: fs.Path}
 
 		switch fs.Status {

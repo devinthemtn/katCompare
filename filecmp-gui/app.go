@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"filecmp-gui/internal/differ"
+	"filecmp-gui/internal/external"
 	"filecmp-gui/internal/file"
 	"filecmp-gui/internal/git"
 	"filecmp-gui/internal/merge"
@@ -32,8 +34,11 @@ type App struct {
 	rightFile *file.FileInfo
 	allFiles  map[string]*file.FileComparison
 
-	gitMode bool
-	leftRef string
+	gitMode   bool
+	gitRoot   string
+	leftRef   string
+	rightRef  string
+	conflicts map[string]bool
 
 	// Paths passed on the command line, pre-filled into the UI on startup.
 	initialPaths []string
@@ -42,10 +47,10 @@ type App struct {
 func NewApp(initialPaths []string) *App {
 	return &App{
 		initialPaths: initialPaths,
-		fileManager: file.New(),
-		differ:      differ.New(),
-		merger:      merge.New(),
-		allFiles:    make(map[string]*file.FileComparison),
+		fileManager:  file.New(),
+		differ:       differ.New(),
+		merger:       merge.New(),
+		allFiles:     make(map[string]*file.FileComparison),
 	}
 }
 
@@ -60,12 +65,14 @@ type FileEntry struct {
 	DisplayName string `json:"displayName"`
 	Source      string `json:"source"` // "both" | "left" | "right"
 	Identical   bool   `json:"identical"`
+	Conflicted  bool   `json:"conflicted"`
 }
 
 type ComparisonResult struct {
 	LeftLabel  string      `json:"leftLabel"`
 	RightLabel string      `json:"rightLabel"`
 	GitMode    bool        `json:"gitMode"`
+	Dirs       bool        `json:"dirs"` // two directories (not git), so both can open in a diff tool
 	Files      []FileEntry `json:"files"`
 }
 
@@ -96,6 +103,11 @@ type DiffResult struct {
 	Inserted    int                `json:"inserted"`
 	Deleted     int                `json:"deleted"`
 	CanMerge    bool               `json:"canMerge"`
+
+	// Whether each side is a real file on disk that can be opened in an editor.
+	LeftEditable  bool `json:"leftEditable"`
+	RightEditable bool `json:"rightEditable"`
+	Conflicted    bool `json:"conflicted"`
 }
 
 type MergeSaveRequest struct {
@@ -144,6 +156,7 @@ func (a *App) LoadComparison(leftPath, rightPath string) (*ComparisonResult, err
 	}
 
 	a.gitMode = false
+	a.conflicts = nil
 	a.leftPath = leftPath
 	a.rightPath = rightPath
 	a.leftFile = leftFile
@@ -185,8 +198,12 @@ func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, er
 	leftLabel := fmt.Sprintf("git:%s", leftRef)
 
 	allFiles := make(map[string]*file.FileComparison)
+	conflicts := make(map[string]bool)
 
 	for _, fs := range statuses {
+		if fs.Conflicted {
+			conflicts[fs.Path] = true
+		}
 		comparison := &file.FileComparison{RelativePath: fs.Path}
 
 		switch fs.Status {
@@ -258,7 +275,10 @@ func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, er
 	}
 
 	a.gitMode = true
+	a.gitRoot = root
 	a.leftRef = leftRef
+	a.rightRef = rightRef
+	a.conflicts = conflicts
 	a.leftPath = leftLabel
 	a.rightPath = rightLabel
 	a.leftFile = &file.FileInfo{Path: leftLabel, Name: leftRef, IsDir: true}
@@ -275,6 +295,7 @@ func (a *App) buildComparisonResult() *ComparisonResult {
 			RelPath:     relPath,
 			DisplayName: a.displayNameForFile(relPath),
 			Source:      sourceString(comp.Source),
+			Conflicted:  a.conflicts[relPath],
 		}
 		if comp.Source == file.SourceBoth {
 			entry.Identical = comp.LeftFile.Content == comp.RightFile.Content
@@ -287,6 +308,7 @@ func (a *App) buildComparisonResult() *ComparisonResult {
 		LeftLabel:  a.leftPath,
 		RightLabel: a.rightPath,
 		GitMode:    a.gitMode,
+		Dirs:       !a.gitMode && a.leftFile.IsDir && a.rightFile.IsDir,
 		Files:      entries,
 	}
 }
@@ -370,6 +392,10 @@ func (a *App) GetDiff(relPath string) (*DiffResult, error) {
 		Inserted:    inserted,
 		Deleted:     deleted,
 		CanMerge:    comp.Source == file.SourceBoth,
+
+		LeftEditable:  a.editablePath(comp, "left") != "",
+		RightEditable: a.editablePath(comp, "right") != "",
+		Conflicted:    a.conflicts[relPath],
 	}, nil
 }
 
@@ -576,4 +602,133 @@ func (a *App) SuggestPaths(input string) []string {
 		suggestions = suggestions[:maxSuggestions]
 	}
 	return suggestions
+}
+
+// ---- External tools ----
+
+type ToolInfo struct {
+	DiffToolConfigured  bool `json:"diffToolConfigured"`
+	MergeToolConfigured bool `json:"mergeToolConfigured"`
+	CanDirDiff          bool `json:"canDirDiff"`
+}
+
+// GetToolInfo reports which external tools are available, so the UI can
+// explain what's missing instead of failing on click.
+func (a *App) GetToolInfo() ToolInfo {
+	return ToolInfo{
+		DiffToolConfigured:  external.HasDiffTool(true),
+		MergeToolConfigured: external.HasMergeTool(true),
+		CanDirDiff:          external.CanDirDiff(true),
+	}
+}
+
+// editablePath returns the on-disk path for one side of a comparison, or ""
+// when that side is missing or isn't a real file (a git ref, or the working
+// tree path when comparing ref to ref).
+func (a *App) editablePath(comp *file.FileComparison, side string) string {
+	var f *file.FileInfo
+	if side == "left" {
+		f = comp.LeftFile
+	} else {
+		f = comp.RightFile
+	}
+	if f == nil || strings.HasPrefix(f.Path, "git:") {
+		return ""
+	}
+	if a.gitMode && (side == "left" || a.rightRef != "") {
+		return ""
+	}
+	return f.Path
+}
+
+// startDetached runs cmd without waiting for it, reaping it in the background.
+func startDetached(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to launch %s: %w", cmd.Args[0], err)
+	}
+	go cmd.Wait() //nolint:errcheck
+	return nil
+}
+
+// OpenInEditor opens one side ("left" | "right") of relPath in the user's
+// editor, at line when > 0.
+func (a *App) OpenInEditor(relPath, side string, line int) error {
+	comp, ok := a.allFiles[relPath]
+	if !ok {
+		return fmt.Errorf("file not found: %s", relPath)
+	}
+	path := a.editablePath(comp, side)
+	if path == "" {
+		return fmt.Errorf("the %s side isn't a file on disk", side)
+	}
+	cmd, err := external.EditorCommand(path, line, true)
+	if err != nil {
+		return err
+	}
+	return startDetached(cmd)
+}
+
+// OpenInDiffTool shows relPath in the external diff tool. In files mode the
+// files are passed directly, so they don't need to be in a git repository.
+func (a *App) OpenInDiffTool(relPath string) error {
+	comp, ok := a.allFiles[relPath]
+	if !ok {
+		return fmt.Errorf("file not found: %s", relPath)
+	}
+	req := external.DiffRequest{}
+	if a.gitMode {
+		req.GitRoot = a.gitRoot
+		req.LeftRef = a.leftRef
+		req.RightRef = a.rightRef
+		req.RelPath = relPath
+	} else {
+		if comp.LeftFile != nil {
+			req.LeftPath = comp.LeftFile.Path
+		}
+		if comp.RightFile != nil {
+			req.RightPath = comp.RightFile.Path
+		}
+	}
+	cmd, err := external.DiffToolCommand(req, true)
+	if err != nil {
+		return err
+	}
+	return startDetached(cmd)
+}
+
+// OpenDirsInDiffTool opens both compared directories in the diff tool.
+func (a *App) OpenDirsInDiffTool() error {
+	if a.gitMode || a.leftFile == nil || a.rightFile == nil || !a.leftFile.IsDir || !a.rightFile.IsDir {
+		return fmt.Errorf("only available when comparing two directories")
+	}
+	cmd, err := external.DirDiffCommand(a.leftFile.Path, a.rightFile.Path, true)
+	if err != nil {
+		return err
+	}
+	return startDetached(cmd)
+}
+
+// ResolveConflict runs git mergetool on a conflicted file. It returns once
+// the tool has launched; when it exits a "conflict-resolved" event is sent
+// so the frontend can reload.
+func (a *App) ResolveConflict(relPath string) error {
+	if !a.gitMode || !a.conflicts[relPath] {
+		return fmt.Errorf("%s has no merge conflicts", relPath)
+	}
+	cmd, err := external.MergeToolCommand(a.gitRoot, relPath, true)
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to launch git mergetool: %w", err)
+	}
+	go func() {
+		err := cmd.Wait()
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		wailsRuntime.EventsEmit(a.ctx, "conflict-resolved", relPath, msg)
+	}()
+	return nil
 }

@@ -5,6 +5,7 @@ export namespace main {
 	    displayName: string;
 	    source: string;
 	    identical: boolean;
+	    conflicted: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FileEntry(source);
@@ -16,12 +17,14 @@ export namespace main {
 	        this.displayName = source["displayName"];
 	        this.source = source["source"];
 	        this.identical = source["identical"];
+	        this.conflicted = source["conflicted"];
 	    }
 	}
 	export class ComparisonResult {
 	    leftLabel: string;
 	    rightLabel: string;
 	    gitMode: boolean;
+	    dirs: boolean;
 	    files: FileEntry[];
 	
 	    static createFrom(source: any = {}) {
@@ -33,6 +36,7 @@ export namespace main {
 	        this.leftLabel = source["leftLabel"];
 	        this.rightLabel = source["rightLabel"];
 	        this.gitMode = source["gitMode"];
+	        this.dirs = source["dirs"];
 	        this.files = this.convertValues(source["files"], FileEntry);
 	    }
 	
@@ -104,6 +108,9 @@ export namespace main {
 	    inserted: number;
 	    deleted: number;
 	    canMerge: boolean;
+	    leftEditable: boolean;
+	    rightEditable: boolean;
+	    conflicted: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new DiffResult(source);
@@ -122,6 +129,9 @@ export namespace main {
 	        this.inserted = source["inserted"];
 	        this.deleted = source["deleted"];
 	        this.canMerge = source["canMerge"];
+	        this.leftEditable = source["leftEditable"];
+	        this.rightEditable = source["rightEditable"];
+	        this.conflicted = source["conflicted"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -159,6 +169,23 @@ export namespace main {
 	        this.target = source["target"];
 	        this.selectedInsertions = source["selectedInsertions"];
 	        this.selectedDeletions = source["selectedDeletions"];
+	    }
+	}
+	
+	export class ToolInfo {
+	    diffToolConfigured: boolean;
+	    mergeToolConfigured: boolean;
+	    canDirDiff: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ToolInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.diffToolConfigured = source["diffToolConfigured"];
+	        this.mergeToolConfigured = source["mergeToolConfigured"];
+	        this.canDirDiff = source["canDirDiff"];
 	    }
 	}
 

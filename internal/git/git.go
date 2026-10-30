@@ -19,8 +19,24 @@ func FindRoot() (string, error) {
 
 // FileStatus describes a single file in a diff.
 type FileStatus struct {
-	Path   string
-	Status byte // 'M' modified, 'A' added, 'D' deleted, 'R' renamed
+	Path       string
+	Status     byte // 'M' modified, 'A' added, 'D' deleted, 'R' renamed
+	Conflicted bool // unmerged: has conflicts from a merge/rebase in progress
+}
+
+// ConflictedFiles returns the unmerged (conflicted) paths in the working tree.
+func ConflictedFiles(root string) ([]string, error) {
+	out, err := exec.Command("git", "-C", root, "diff", "--name-only", "--diff-filter=U").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff failed: %w", err)
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
 }
 
 // ChangedFiles returns files that differ between leftRef and the target.
@@ -62,12 +78,29 @@ func ChangedFiles(root, leftRef, rightRef string) ([]FileStatus, error) {
 			// Rename lines look like "R100\told\tnew" — use the destination (last field)
 			path := parts[len(parts)-1]
 			status := parts[0][0]
-			if status == 'R' {
-				status = 'M' // treat rename as modified for display purposes
+			if status == 'R' || status == 'U' {
+				status = 'M' // treat rename/unmerged as modified for display purposes
 			}
 			if !seen[path] {
 				seen[path] = true
 				files = append(files, FileStatus{Path: path, Status: status})
+			}
+		}
+	}
+
+	if rightRef == "" {
+		// Mark files with merge conflicts; they only exist in the working tree.
+		conflicted, _ := ConflictedFiles(root)
+		for _, path := range conflicted {
+			found := false
+			for i := range files {
+				if files[i].Path == path {
+					files[i].Conflicted = true
+					found = true
+				}
+			}
+			if !found {
+				files = append(files, FileStatus{Path: path, Status: 'M', Conflicted: true})
 			}
 		}
 	}

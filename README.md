@@ -16,9 +16,10 @@ File Compare is a fast, color-coded diff and merge tool written in Go that is cl
 - 🔀 **Cherry-pick merging** — choose individual insertions/deletions to apply and save to `<file>.merged`; originals are never overwritten
 - 📋 **Directory sync** — copy files that exist on only one side into the other, in either direction
 - 👥 **Unified or side-by-side** views, switchable instantly
+- ✏️ **Hand off to your own tools** — open a file in your editor at the line you're looking at, send the pair to your external diff tool (meld, kdiff3, VS Code, nvimdiff…), or resolve git merge conflicts with `git mergetool`
 - 🔎 **Filter and autocomplete** — narrow the file list by name, and get live path suggestions as you type
 - 🖱️⌨️ **Your choice of interface** — point-and-click desktop app or vim-style (`j`/`k`) terminal UI, same results either way
-- 🔍 **60+ text file types** detected automatically
+- 🔍 **60+ text file types** recognized by name, plus any other file that looks like text (no binary content)
 
 ## Quick Start
 
@@ -40,11 +41,12 @@ Requires Go 1.25+, Node.js, and the [Wails v2 CLI](https://wails.io):
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 cd filecmp-gui
-wails build            # Linux: may need -tags webkit2_41 (see WebKitGTK notes below)
+wails build            # Linux: needs GTK/WebKit -dev packages (see below)
 ./build/bin/filecmp-gui
+./build/bin/filecmp-gui old.yaml new.yaml   # pre-fill both paths and compare right away
 ```
 
-Pick the **Files / Directories** tab to compare two paths (type them, or use the native file/folder picker), or the **Git** tab to compare refs — leave the right ref blank to compare against the working tree.
+Pick the **Files / Directories** tab to compare two paths (type them, use the native file/folder picker, or pass them on the command line), or the **Git** tab to compare refs — leave the right ref blank to compare against the working tree.
 
 ### Terminal UI
 
@@ -71,6 +73,7 @@ The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It uses the same diff/m
 - **Copy**: copy files that exist on only one side into the other directory, in either direction
 - Path autocomplete and native file/folder picker dialogs
 - File-list filtering
+- **External tools**: **Open left/right** (or **Open working copy** in git mode) opens the file in your editor; click any line number to open it at that line. **External diff** opens the pair in your diff tool, **Folders in diff tool** opens two compared directories, and **Resolve conflict** runs `git mergetool` on conflicted files (marked ⚠). Shortcuts: `e` = open, `d` = external diff. See [Editor & external diff tools](#editor--external-diff-tools)
 
 ### Building the GUI
 
@@ -79,6 +82,14 @@ Prerequisites: Go 1.25+, Node.js (for the Vite-built frontend), and the Wails v2
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 ```
+
+**Linux only:** Wails also needs GTK/WebKit *development* headers to compile against (having the runtime libraries installed isn't enough — `pkg-config` needs the `-dev` packages, or the Go build fails with a cgo/`pkg-config` error). On Debian/Ubuntu:
+
+```bash
+sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev
+```
+
+Run `wails doctor` to check what's missing on your system.
 
 Then, from the repo root:
 
@@ -91,14 +102,9 @@ then you can just copy the bin from the 'build/bin' directory into your personal
 
 #### Linux: WebKitGTK version
 
-Wails v2 links against WebKitGTK 4.0 by default. Distros that only ship WebKitGTK 4.1 (e.g. Ubuntu 24.04+) need the `webkit2_41` build tag, or the Go build fails with a `pkg-config` error for `webkit2gtk-4.0`:
+Wails v2 links against WebKitGTK 4.0 unless built with the `webkit2_41` tag. Most current distros (e.g. Ubuntu 24.04+) only ship WebKitGTK 4.1, so this project sets that tag by default in `wails.json` (`"build:tags": "webkit2_41"`) — plain `wails dev` / `wails build` just work. The tag has no effect on macOS or Windows builds.
 
-```bash
-wails dev -tags webkit2_41
-wails build -tags webkit2_41
-```
-
-Check what you have with `pkg-config --exists webkit2gtk-4.0 && echo 4.0` / `pkg-config --exists webkit2gtk-4.1 && echo 4.1`; only pass the tag if you have 4.1 but not 4.0.
+If your system only has WebKitGTK 4.0 (older distros), remove the `build:tags` line from `wails.json`, or the Go build fails with a `pkg-config` error for `webkit2gtk-4.1`. Check what you have with `pkg-config --exists webkit2gtk-4.0 && echo 4.0` / `pkg-config --exists webkit2gtk-4.1 && echo 4.1`.
 
 #### Building for Windows
 
@@ -238,6 +244,10 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 - **p**: Previous file
 - **m**: Enter merge mode (only available for files that exist on both sides)
 - **c**: Enter copy mode (only available when the loaded directories have unique files)
+- **e**: Edit the right file (the working tree file in git mode) at the cursor line
+- **E**: Edit the left file at the cursor line
+- **D**: Open the file pair in your external diff tool
+- **R**: Resolve a git merge conflict with `git mergetool` (conflicted files show ⚠ **[CONFLICT]**)
 - **Esc**: Return to file selection
 - **?**: Show help screen
 - **q/Ctrl+C**: Quit application
@@ -266,6 +276,31 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 
 > Copy mode is entered with **c** from the diff view (not from file selection).
 
+## Editor & external diff tools
+
+Both the GUI and the TUI can hand the current file off to other apps.
+
+**Editor.** The first one found is used:
+1. `$FILECMP_EDITOR`
+2. `$VISUAL`
+3. `$EDITOR`
+4. the OS default app (`xdg-open` / `open` / `start`)
+
+The value can include arguments, for example `FILECMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
+
+**Diff and merge tools** come from your git config, so set them once:
+
+```bash
+git config --global diff.tool meld       # or kdiff3, vscode, nvimdiff, bc, ...
+git config --global merge.tool meld
+git config --global diff.guitool meld    # optional: GUI-only choice (e.g. diff.tool = nvimdiff for the TUI)
+```
+
+- **Git mode** runs `git difftool <ref> [<ref>] -- <file>`.
+- **Plain files and folders** don't need to be in a git repository. Files are passed to `git difftool --no-index`, which works anywhere. If git isn't installed or no tool is configured, the app launches the tool directly: a `difftool.<name>.cmd` you've defined, or the first of meld / kdiff3 / VS Code it finds (nvim/vim `-d` too, but only in the TUI). A file that exists on only one side is compared against an empty file.
+- **Whole folders** open directly in tools that support directories (meld, kdiff3, Beyond Compare).
+- **Merge conflicts**: in git mode (ref vs working tree), files with unresolved conflicts during a merge or rebase are marked ⚠. **Resolve conflict** / `R` runs `git mergetool -- <file>`, then reloads the list.
+
 ## Color Legend
 
 ### Diff Colors
@@ -280,10 +315,11 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 - **✗ Red X**: Different files (content differs between directories)
 - **◄ Blue arrow**: File exists only in LEFT directory **[LEFT ONLY]**
 - **► Orange arrow**: File exists only in RIGHT directory **[RIGHT ONLY]**
+- **⚠ Yellow warning**: File has unresolved git merge conflicts **[CONFLICT]**
 
 ## 📄 Supported File Types
 
-The tool intelligently detects and compares 60+ text file types:
+Files with any of the 60+ extensions or names below are always treated as text. Any other file is still compared if its content looks like text — the same heuristic git uses: it's non-empty and has no NUL bytes in the first 8000 bytes. So `.lock`, `.tf`, `.vue`, extensionless scripts, etc. work fine, while images, archives, and compiled binaries are skipped.
 
 ### Programming Languages
 `.go` `.js` `.ts` `.py` `.java` `.c` `.cpp` `.h` `.hpp` `.rs` `.swift` `.kt` `.cs` `.vb` `.fs` `.php` `.rb` `.scala` `.clj` `.hs` `.elm` `.pl` `.pm` `.r` `.R` `.m`
@@ -393,6 +429,9 @@ examples/       # Sample files for testing
 | `n/p` | ❌ | ✅ | ✅ | ❌ | ❌ | Next/previous file |
 | `m` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter merge mode |
 | `c` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter copy mode |
+| `e`/`E` | ❌ | ✅ | ✅ | ❌ | ❌ | Edit right/left file in your editor |
+| `D` | ❌ | ✅ | ✅ | ❌ | ❌ | Open in external diff tool |
+| `R` | ❌ | ✅ | ✅ | ❌ | ❌ | Resolve git conflict with mergetool |
 | `t` | ❌ | ❌ | ❌ | ✅ | ✅ | Switch merge/copy target |
 | `a` | ❌ | ❌ | ❌ | ✅ | ✅ | Select all changes/files |
 | `Space` | ❌ | ❌ | ❌ | ✅ | ✅ | Toggle current change/file |

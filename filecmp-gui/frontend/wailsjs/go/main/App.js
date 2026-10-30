@@ -14,12 +14,32 @@ export function GetInitialPaths() {
   return window['go']['main']['App']['GetInitialPaths']();
 }
 
+export function GetToolInfo() {
+  return window['go']['main']['App']['GetToolInfo']();
+}
+
 export function LoadComparison(arg1, arg2) {
   return window['go']['main']['App']['LoadComparison'](arg1, arg2);
 }
 
 export function LoadGitComparison(arg1, arg2) {
   return window['go']['main']['App']['LoadGitComparison'](arg1, arg2);
+}
+
+export function OpenDirsInDiffTool() {
+  return window['go']['main']['App']['OpenDirsInDiffTool']();
+}
+
+export function OpenInDiffTool(arg1) {
+  return window['go']['main']['App']['OpenInDiffTool'](arg1);
+}
+
+export function OpenInEditor(arg1, arg2, arg3) {
+  return window['go']['main']['App']['OpenInEditor'](arg1, arg2, arg3);
+}
+
+export function ResolveConflict(arg1) {
+  return window['go']['main']['App']['ResolveConflict'](arg1);
 }
 
 export function SaveMerge(arg1) {
