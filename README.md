@@ -124,29 +124,16 @@ If your system only has WebKitGTK 4.0 (older distros), remove the `build:tags` l
 
 **On Windows**, with Go and the Wails CLI installed, just run `wails build` in `filecmp-gui/` — no extra setup needed. It uses WebView2 (present by default on current Windows 10/11).
 
-**Cross-compiling from Linux/WSL** works too. Install the mingw-w64 cross-compiler (and NSIS if you want an installer):
+**Cross-compiling from Linux/WSL** needs no extra compiler, since the Windows build doesn't use cgo. From the repository root:
 
 ```bash
-sudo apt install gcc-mingw-w64-x86-64 nsis
+make build-gui-windows     # → build/filecmp-gui-windows-amd64.exe
+make build-win-installer   # → build/filecmp-gui-windows-amd64-installer.exe (needs: sudo apt install nsis)
 ```
 
-Then build with `CC` pointed at the cross-compiler:
+The installer installs File Compare for the current user into `%LOCALAPPDATA%\Programs\File Compare`, with no admin prompt. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. It's unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. Its product name and version come from the `info` section of `filecmp-gui/wails.json`. Bump `productVersion` there when you release.
 
-```bash
-# Just the .exe
-CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc wails build -platform windows/amd64
-
-# .exe + NSIS installer
-CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc wails build -platform windows/amd64 -nsis
-```
-
-Output goes to `filecmp-gui/build/bin/`:
-- `filecmp-gui.exe` — the app
-- `filecmp-gui-amd64-installer.exe` — NSIS installer (only with `-nsis`)
-
-**Installer for Windows users:** `make build-win-installer` (needs `sudo apt install nsis`) creates `build/filecmp-gui-windows-amd64-installer.exe`. Double-clicking it installs File Compare for the current user (no admin prompt) into `%LOCALAPPDATA%\Programs\File Compare`. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. The installer is unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. The product name and version shown come from the `info` section of `filecmp-gui/wails.json`. Bump `productVersion` there when you release.
-
-By default the exe downloads WebView2 on first run if it's missing. To bundle it instead (fully offline install), add `-webview2 embed`.
+By default the exe downloads WebView2 on first run if it's missing. To bundle it instead (fully offline install), pass `-webview2 embed` to `wails build`.
 
 #### Building for macOS
 
