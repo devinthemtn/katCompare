@@ -612,6 +612,11 @@ type ToolInfo struct {
 	CanDirDiff          bool `json:"canDirDiff"`
 }
 
+// GetVersion returns the build version, shown in the help dialog.
+func (a *App) GetVersion() string {
+	return version
+}
+
 // GetToolInfo reports which external tools are available, so the UI can
 // explain what's missing instead of failing on click.
 func (a *App) GetToolInfo() ToolInfo {

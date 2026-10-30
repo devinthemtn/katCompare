@@ -10,6 +10,7 @@ import {
     SelectFile,
     SuggestPaths,
     GetToolInfo,
+    GetVersion,
     OpenInEditor,
     OpenInDiffTool,
     OpenDirsInDiffTool,
@@ -871,6 +872,10 @@ el('copy-execute-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 
 const helpModal = el('help-modal');
+
+GetVersion().then((v) => {
+    el('help-version').textContent = v;
+});
 
 function openHelpModal() {
     helpModal.classList.remove('hidden');

@@ -561,7 +561,7 @@ func (m *Model) renderDiffContent() string {
 func (m *Model) renderHelpView() string {
 	var b strings.Builder
 
-	title := titleStyle.Render("Help - File Comparison Tool")
+	title := titleStyle.Render("Help - File Comparison Tool " + Version)
 	b.WriteString(title)
 	b.WriteString("\n\n")
 

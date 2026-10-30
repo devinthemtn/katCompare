@@ -4,22 +4,32 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 
 	"golang-fileCmp/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// version is set at build time with -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
+	ui.Version = resolveVersion()
+
 	// Create the model
 	model := ui.New()
 
 	// Handle command line arguments
 	args := os.Args[1:]
 
-	// Show usage if help is requested (must check before SetLeftPath)
+	// Show usage/version if requested (must check before SetLeftPath)
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		showUsage()
+		return
+	}
+	if len(args) > 0 && (args[0] == "-v" || args[0] == "--version") {
+		fmt.Printf("filecmp %s\n", ui.Version)
 		return
 	}
 
@@ -56,16 +66,33 @@ func main() {
 	}
 }
 
+// resolveVersion prefers the ldflags-stamped version, falling back to the
+// module version recorded by "go install module@version".
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
+
 func showUsage() {
-	fmt.Printf(`File Comparison TUI Tool
+	fmt.Printf(`File Comparison TUI Tool %s
 
 Usage:
   %s [left_path] [right_path]
   %s --git [left_ref] [right_ref]
+  %s --version
 
 Arguments:
   left_path   Path to left file or directory (optional)
   right_path  Path to right file or directory (optional)
+
+Options:
+  -h, --help                Show this help
+  -v, --version             Print the version and exit
 
 Git Mode:
   --git                     Compare HEAD against working tree
@@ -102,5 +129,5 @@ Colors:
   Red background:   Deleted lines (-)
   Gray text:        Unchanged lines
 
-`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+`, ui.Version, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }

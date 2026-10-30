@@ -18,6 +18,10 @@ export function GetToolInfo() {
   return window['go']['main']['App']['GetToolInfo']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
 export function LoadComparison(arg1, arg2) {
   return window['go']['main']['App']['LoadComparison'](arg1, arg2);
 }

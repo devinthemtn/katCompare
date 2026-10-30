@@ -667,6 +667,13 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     font-size: 15px;
 }
 
+.help-version {
+    margin-left: 6px;
+    font-size: 12px;
+    font-weight: normal;
+    color: var(--text-dim);
+}
+
 .modal-toolbar {
     display: flex;
     align-items: center;

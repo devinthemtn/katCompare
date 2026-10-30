@@ -2,8 +2,10 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/wailsapp/wails/v2"
@@ -14,7 +16,18 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is set at build time with -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
+	version = resolveVersion()
+	for _, arg := range os.Args[1:] {
+		if arg == "-v" || arg == "--version" {
+			fmt.Printf("filecmp-gui %s\n", version)
+			return
+		}
+	}
+
 	// Create an instance of the app structure
 	app := NewApp(initialPaths(os.Args[1:]))
 
@@ -38,6 +51,18 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+// resolveVersion prefers the ldflags-stamped version, falling back to the
+// module version recorded by "go install module@version".
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
 }
 
 // initialPaths turns up to two command-line arguments into absolute paths for

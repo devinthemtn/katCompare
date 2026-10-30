@@ -120,6 +120,9 @@ type externalDoneMsg struct {
 	err  error
 }
 
+// Version is the build version shown in the help screen; set by main.
+var Version = "dev"
+
 // Styles for the UI
 var (
 	titleStyle = lipgloss.NewStyle().

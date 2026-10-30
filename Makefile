@@ -7,6 +7,9 @@ MAIN_FILE=main.go
 GUI_DIR=filecmp-gui
 GUI_BINARY=filecmp-gui
 WAILS ?= wails
+# Version stamped into both binaries (override with: make VERSION=v1.2.3)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS = -X main.version=$(VERSION)
 # Install location (override with: make install BINDIR=/usr/local/bin)
 BINDIR ?= $(shell go env GOPATH)/bin
 
@@ -16,30 +19,30 @@ all: build build-gui
 # Build the application
 build:
 	@echo "🔨 Building $(BINARY_NAME)..."
-	@go build -o $(BINARY_NAME) $(MAIN_FILE)
+	@go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) $(MAIN_FILE)
 	@echo "✅ Build complete: ./$(BINARY_NAME)"
 
 # Build the Wails desktop GUI (also installs frontend npm deps)
 build-gui:
 	@command -v $(WAILS) >/dev/null 2>&1 || { echo "❌ wails CLI not found. Install it with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"; exit 1; }
 	@echo "🔨 Building $(GUI_BINARY)..."
-	@cd $(GUI_DIR) && $(WAILS) build -clean
+	@cd $(GUI_DIR) && $(WAILS) build -clean -ldflags "$(LDFLAGS)"
 	@echo "✅ Build complete: ./$(GUI_DIR)/build/bin/$(GUI_BINARY)"
 
 # Build with optimizations for release
 build-release:
 	@echo "🚀 Building $(BINARY_NAME) for release..."
-	@go build -ldflags="-s -w" -o $(BINARY_NAME) $(MAIN_FILE)
+	@go build -ldflags="-s -w $(LDFLAGS)" -o $(BINARY_NAME) $(MAIN_FILE)
 	@echo "✅ Release build complete: ./$(BINARY_NAME)"
 
 # Build for multiple platforms
 build-all:
 	@echo "🌍 Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
-	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_FILE)
-	@GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(MAIN_FILE)
-	@GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_FILE)
-	@GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_FILE)
+	@GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_FILE)
+	@GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(MAIN_FILE)
+	@GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_FILE)
+	@GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_FILE)
 	@echo "✅ Multi-platform builds complete in $(BUILD_DIR)/"
 	@ls -la $(BUILD_DIR)/
 
