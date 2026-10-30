@@ -464,7 +464,7 @@ make demo
 
 ```bash
 # Clone and build
-git clone <repository-url>
+git clone https://github.com/devinthemtn/fileCmp-golang-wails.git
 cd fileCmp-golang-wails
 make deps
 make build
@@ -472,7 +472,7 @@ make build
 # Or build for multiple platforms
 make build-all
 
-# Install system-wide (optional)
+# Install TUI + GUI to $(go env GOPATH)/bin (optional)
 make install
 ```
 

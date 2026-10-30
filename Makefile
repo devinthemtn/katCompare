@@ -106,11 +106,6 @@ test:
 	@go test ./...
 	@echo "✅ Tests complete"
 
-# Run the test diff program
-test-diff:
-	@echo "🧪 Running diff engine test..."
-	@go run test-diff.go
-
 # Run the application with example files
 run-files:
 	@echo "🚀 Running with example files..."
@@ -231,7 +226,6 @@ help:
 	@echo "  build-win-installer Build a per-user Windows installer (needs NSIS)"
 	@echo "  deps          Install Go dependencies"
 	@echo "  test          Run tests"
-	@echo "  test-diff     Run diff engine test"
 	@echo "  run           Run in interactive mode"
 	@echo "  run-files     Run with example files"
 	@echo "  run-dirs      Run with example directories"

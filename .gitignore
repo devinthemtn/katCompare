@@ -8,3 +8,6 @@
 # Go test/coverage output
 *.test
 *.out
+
+# Merge output (merge mode saves <file>.merged)
+*.merged
