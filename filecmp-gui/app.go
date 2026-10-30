@@ -14,6 +14,7 @@ import (
 	"golang-fileCmp/internal/file"
 	"golang-fileCmp/internal/git"
 	"golang-fileCmp/internal/merge"
+	"golang-fileCmp/internal/proc"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -672,7 +673,10 @@ func (a *App) editablePath(comp *file.FileComparison, side string) string {
 }
 
 // startDetached runs cmd without waiting for it, reaping it in the background.
+// GUI mode only launches GUI tools, so any console of their own (git, cmd,
+// sh wrappers on Windows) is hidden.
 func startDetached(cmd *exec.Cmd) error {
+	proc.HideConsole(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch %s: %w", cmd.Args[0], err)
 	}
@@ -749,6 +753,7 @@ func (a *App) ResolveConflict(relPath string) error {
 	if err != nil {
 		return err
 	}
+	proc.HideConsole(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to launch git mergetool: %w", err)
 	}

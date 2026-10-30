@@ -1,16 +1,22 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+
+	"golang-fileCmp/internal/proc"
 )
 
 // FindRoot returns the absolute path of the git repository root,
-// or an error if the current directory is not inside a git repo.
+// or an error if git is missing or the current directory is not inside a repo.
 func FindRoot() (string, error) {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	out, err := proc.Command("git", "rev-parse", "--show-toplevel").Output()
+	if errors.Is(err, exec.ErrNotFound) {
+		return "", fmt.Errorf("git is not installed")
+	}
 	if err != nil {
 		return "", fmt.Errorf("not inside a git repository")
 	}
@@ -26,7 +32,7 @@ type FileStatus struct {
 
 // ConflictedFiles returns the unmerged (conflicted) paths in the working tree.
 func ConflictedFiles(root string) ([]string, error) {
-	out, err := exec.Command("git", "-C", root, "diff", "--name-only", "--diff-filter=U").Output()
+	out, err := proc.Command("git", "-C", root, "diff", "--name-only", "--diff-filter=U").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed: %w", err)
 	}
@@ -52,7 +58,7 @@ func ChangedFiles(root, leftRef, rightRef string) ([]FileStatus, error) {
 		args = []string{"-C", root, "diff", "--name-status", leftRef, rightRef}
 	}
 
-	out, err := exec.Command("git", args...).Output()
+	out, err := proc.Command("git", args...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed: %w", err)
 	}
@@ -60,7 +66,7 @@ func ChangedFiles(root, leftRef, rightRef string) ([]FileStatus, error) {
 	var staged []byte
 	if rightRef == "" {
 		// Also include files that are staged but not yet in a commit vs leftRef
-		staged, _ = exec.Command("git", "-C", root, "diff", "--cached", "--name-status", leftRef).Output()
+		staged, _ = proc.Command("git", "-C", root, "diff", "--cached", "--name-status", leftRef).Output()
 	}
 
 	seen := make(map[string]bool)
@@ -111,7 +117,7 @@ func ChangedFiles(root, leftRef, rightRef string) ([]FileStatus, error) {
 // FileAtRef returns the content of path at the given git ref.
 // Returns an error if the file does not exist at that ref.
 func FileAtRef(root, ref, path string) (string, error) {
-	out, err := exec.Command("git", "-C", root, "show", fmt.Sprintf("%s:%s", ref, path)).Output()
+	out, err := proc.Command("git", "-C", root, "show", fmt.Sprintf("%s:%s", ref, path)).Output()
 	if err != nil {
 		return "", fmt.Errorf("%s not found at %s", path, ref)
 	}
@@ -150,7 +156,7 @@ const maxRefsPerGroup = 30
 // (plus the working tree when includeWorkingTree is set), local and remote
 // branches by most recent commit, recent tags and recent commits on HEAD.
 func ListRefs(root string, includeWorkingTree bool) ([]RefOption, error) {
-	if _, err := exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", "HEAD").Output(); err != nil {
+	if _, err := proc.Command("git", "-C", root, "rev-parse", "--verify", "-q", "HEAD").Output(); err != nil {
 		return nil, fmt.Errorf("repository has no commits yet")
 	}
 
@@ -214,13 +220,13 @@ func ListRefs(root string, includeWorkingTree bool) ([]RefOption, error) {
 
 // refExists reports whether ref resolves to a commit.
 func refExists(root, ref string) bool {
-	return exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", ref+"^{commit}").Run() == nil
+	return proc.Command("git", "-C", root, "rev-parse", "--verify", "-q", ref+"^{commit}").Run() == nil
 }
 
 // gitLines runs git in root and returns its non-empty output lines,
 // or nil if the command fails.
 func gitLines(root string, args ...string) []string {
-	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
+	out, err := proc.Command("git", append([]string{"-C", root}, args...)...).Output()
 	if err != nil {
 		return nil
 	}
