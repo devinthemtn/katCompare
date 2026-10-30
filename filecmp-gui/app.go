@@ -9,11 +9,11 @@ import (
 	"sort"
 	"strings"
 
-	"filecmp-gui/internal/differ"
-	"filecmp-gui/internal/external"
-	"filecmp-gui/internal/file"
-	"filecmp-gui/internal/git"
-	"filecmp-gui/internal/merge"
+	"golang-fileCmp/internal/differ"
+	"golang-fileCmp/internal/external"
+	"golang-fileCmp/internal/file"
+	"golang-fileCmp/internal/git"
+	"golang-fileCmp/internal/merge"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )

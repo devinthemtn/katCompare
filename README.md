@@ -62,7 +62,7 @@ go build -o filecmp
 
 ## Desktop GUI (Wails)
 
-The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It uses the same diff/merge/file/git engine as the TUI (copied into `filecmp-gui/internal/`, unmodified) behind a mouse-driven interface built with [Wails](https://wails.io) — a Go backend with a vanilla HTML/CSS/JS frontend, no framework. It's a separate Go module and doesn't affect or depend on the TUI build.
+The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It imports the same diff/merge/file/git/external packages from the repository's `internal/` directory as the TUI, behind a mouse-driven interface built with [Wails](https://wails.io) — a Go backend with a vanilla HTML/CSS/JS frontend, no framework. Both share a single Go module; the TUI binary never imports Wails, so it doesn't pull in any GUI dependencies.
 
 ### GUI Features
 
@@ -143,11 +143,7 @@ filecmp-gui/
 ├── app.go              # Wails-bound backend: LoadComparison, LoadGitComparison,
 │                        # GetDiff, SaveMerge, CopyFiles, SuggestPaths, dialogs
 ├── main.go              # wails.Run(...) entrypoint
-├── internal/
-│   ├── differ/          # diff engine (copied from the TUI, unmodified)
-│   ├── file/            # file/directory loading & type detection
-│   ├── merge/           # merge/change-selection logic
-│   └── git/             # git ref / working-tree diff support
+│                        # (logic packages are imported from the root internal/)
 └── frontend/
     ├── index.html
     └── src/
@@ -158,7 +154,6 @@ filecmp-gui/
 ### GUI notes
 
 - Copy mode is unavailable when comparing git refs, since the compared "roots" are synthetic (commit contents / working tree), not real directories to copy into.
-- `filecmp-gui/internal/{differ,file,merge,git}` are plain copies of the same-named packages at the repository root, not imports — Go's `internal/` visibility rules don't allow cross-module imports, and this module is intentionally independent of the TUI's module.
 
 ---
 
@@ -409,9 +404,9 @@ internal/
 ├── merge/      # Merge functionality and change selection
 ├── file/       # File operations and type detection
 ├── git/        # Git ref / working-tree comparison support (--git mode)
-└── ...
+└── external/   # Launching editors and external diff/merge tools
 
-filecmp-gui/    # Wails desktop GUI (separate Go module) — see "Desktop GUI (Wails)" above
+filecmp-gui/    # Wails desktop GUI (same Go module, imports internal/) — see "Desktop GUI (Wails)" above
 examples/       # Sample files for testing
 ```
 

@@ -26,6 +26,10 @@
     --insert-border: #3b82f6;
     --delete-bg: rgba(248, 113, 113, 0.22);
     --delete-border: #f87171;
+    --control-h: 34px;
+    --control-h-sm: 28px;
+    --radius: 7px;
+    color-scheme: dark;
     font-family: "Nunito", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -72,7 +76,7 @@ input[type="text"] {
     --wails-draggable: drag;
 }
 
-.topbar button, .topbar input {
+.topbar button, .topbar input, .topbar select {
     --wails-draggable: no-drag;
 }
 
@@ -89,6 +93,12 @@ input[type="text"] {
     border-radius: 6px;
     font-weight: 700;
     font-size: 13px;
+    transition: background 0.12s, color 0.12s;
+}
+
+.mode-tab:hover:not(.active) {
+    background: var(--bg-elevated);
+    color: var(--text);
 }
 
 .mode-tab.active {
@@ -138,33 +148,59 @@ input[type="text"] {
 
 input#left-path, input#right-path, input#left-ref, input#right-ref, input#filter-input {
     width: 100%;
+    height: var(--control-h);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 8px 10px;
-    border-radius: 6px;
+    padding: 0 10px;
+    border-radius: var(--radius);
     font-size: 13px;
     outline: none;
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+input#filter-input {
+    height: var(--control-h-sm);
+    font-size: 12.5px;
 }
 
 select.ref-select {
-    width: 150px;
+    -webkit-appearance: none;
+    appearance: none;
+    width: 170px;
+    height: var(--control-h);
     flex-shrink: 0;
-    background: var(--bg-elevated);
+    background-color: var(--bg-elevated);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239096a8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
     border: 1px solid var(--border);
-    color: var(--text);
-    padding: 7px 8px;
-    border-radius: 6px;
+    color: var(--text-dim);
+    padding: 0 28px 0 10px;
+    border-radius: var(--radius);
+    font-family: inherit;
     font-size: 13px;
     outline: none;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    transition: border-color 0.12s, box-shadow 0.12s, color 0.12s;
+    --wails-draggable: no-drag;
 }
 
-select.ref-select:focus {
-    border-color: var(--accent);
+select.ref-select:hover {
+    border-color: #3a4054;
+    color: var(--text);
 }
 
+select.ref-select option {
+    background: var(--bg-elevated-2);
+    color: var(--text);
+}
+
+select.ref-select:focus,
 input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right-ref:focus, input#filter-input:focus {
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .suggestions {
@@ -202,17 +238,36 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 }
 
 .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: var(--control-h);
+    padding: 0 14px;
     background: var(--bg-elevated-2);
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 8px 14px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
+    line-height: 1;
     white-space: nowrap;
+    flex-shrink: 0;
+    outline: none;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
 .btn:hover:not(:disabled) {
+    background: #2e3442;
+    border-color: #3a4054;
+}
+
+.btn:active:not(:disabled) {
+    background: var(--bg-elevated);
+}
+
+.btn:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-soft);
     border-color: var(--accent);
 }
 
@@ -225,24 +280,48 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     background: var(--accent);
     border-color: var(--accent);
     color: #fff;
+    padding: 0 18px;
 }
 
 .btn-primary:hover:not(:disabled) {
+    background: #8c6af6;
+    border-color: #8c6af6;
+}
+
+.btn-primary:active:not(:disabled) {
     background: #6a45e0;
+    border-color: #6a45e0;
 }
 
 .btn-ghost {
     background: transparent;
+    color: var(--text-dim);
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: var(--bg-elevated);
+    color: var(--text);
 }
 
 .btn-small {
-    padding: 5px 10px;
+    height: var(--control-h-sm);
+    padding: 0 10px;
     font-size: 12px;
 }
 
+.btn-primary.btn-small {
+    padding: 0 12px;
+}
+
 .btn-icon {
-    padding: 8px 10px;
+    width: var(--control-h);
+    padding: 0;
     font-size: 15px;
+    color: var(--text-dim);
+}
+
+.btn-icon:hover:not(:disabled) {
+    color: var(--text);
 }
 
 .hidden {
@@ -269,6 +348,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .sidebar-header {
     display: flex;
+    align-items: center;
     gap: 6px;
     padding: 10px;
     border-bottom: 1px solid var(--border);
@@ -423,25 +503,50 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 }
 
 .segmented {
-    display: flex;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: var(--control-h-sm);
+    padding: 2px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
+    border-radius: var(--radius);
 }
 
 .segmented-btn {
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
     background: transparent;
     border: none;
+    border-radius: 5px;
     color: var(--text-dim);
-    padding: 6px 12px;
+    padding: 0 10px;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
+    white-space: nowrap;
+    outline: none;
+    transition: background 0.12s, color 0.12s;
+}
+
+.segmented-btn:hover:not(:disabled):not(.active) {
+    background: var(--bg-elevated-2);
+    color: var(--text);
 }
 
 .segmented-btn.active {
     background: var(--accent);
     color: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.segmented-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.segmented-btn:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .content-body {
@@ -743,10 +848,11 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .mode-tabs .help-btn {
     margin-left: auto;
-    width: 28px;
-    height: 28px;
+    width: var(--control-h-sm);
+    height: var(--control-h-sm);
     padding: 0;
     border-radius: 50%;
+    font-size: 13px;
     font-weight: 700;
 }
 
