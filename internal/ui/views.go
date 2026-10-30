@@ -618,7 +618,16 @@ Side-by-Side View Mode:
 
 External Tools:
   Editor           $FILECMP_EDITOR, then $VISUAL, then $EDITOR, then the OS default
+                   (a terminal $VISUAL/$EDITOR is preferred over a GUI one here)
   Diff/merge tool  git config diff.tool / merge.tool (e.g. meld, kdiff3, nvimdiff)
+                   terminal tools (nvimdiff, emacsclient -nw, ...) are preferred here
+
+Config Files:
+  filecmp has no config file of its own; tools are read from git config:
+  Global           ~/.gitconfig or ~/.config/git/config
+                   (Windows: %USERPROFILE%\.gitconfig)
+  Per repository   <repo>/.git/config (overrides global)
+  Editor vars      set in your shell profile (~/.bashrc, ~/.zshrc, ...)
 
 Merge Mode:
   ↑/↓ or j/k       Navigate through diff lines

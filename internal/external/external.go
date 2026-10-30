@@ -46,23 +46,41 @@ var colonLineEditors = map[string]bool{
 // jumping to line when it is > 0 and the editor supports it. The editor is
 // taken from FILECMP_EDITOR, then $VISUAL, then $EDITOR, falling back to the
 // OS default opener. When gui is true (no terminal attached) editors that
-// need a terminal are skipped.
+// need a terminal are skipped. When gui is false the TUI prefers a terminal
+// editor: FILECMP_EDITOR is an explicit choice and always wins, but a GUI
+// $VISUAL (e.g. "emacsclient -c") gives way to a terminal $EDITOR.
 func EditorCommand(path string, line int, gui bool) (*exec.Cmd, error) {
+	var guiFallback []string
 	for _, env := range editorEnvVars {
 		fields := strings.Fields(os.Getenv(env))
 		if len(fields) == 0 {
 			continue
 		}
-		if gui && NeedsTerminal(fields) {
-			continue
-		}
 		if _, err := exec.LookPath(fields[0]); err != nil {
 			continue
 		}
-		args := append(fields[1:len(fields):len(fields)], editorFileArgs(fields[0], path, line)...)
-		return exec.Command(fields[0], args...), nil
+		terminal := NeedsTerminal(fields)
+		if gui && terminal {
+			continue
+		}
+		if !gui && !terminal && env != "FILECMP_EDITOR" {
+			if guiFallback == nil {
+				guiFallback = fields
+			}
+			continue
+		}
+		return editorExec(fields, path, line), nil
+	}
+	if guiFallback != nil {
+		return editorExec(guiFallback, path, line), nil
 	}
 	return OSOpenCommand(path), nil
+}
+
+// editorExec builds the command for an editor command line opening path.
+func editorExec(fields []string, path string, line int) *exec.Cmd {
+	args := append(fields[1:len(fields):len(fields)], editorFileArgs(fields[0], path, line)...)
+	return exec.Command(fields[0], args...)
 }
 
 // NeedsTerminal reports whether an editor command line (program + args)
@@ -164,38 +182,77 @@ func gitConfigGet(dir, key string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// isTerminalTool reports whether a git tool name is known to need a terminal.
-func isTerminalTool(name string) bool {
-	t, ok := knownTools[name]
-	return ok && t.terminal
+// isTerminalTool reports whether a diff/merge tool needs a terminal: a known
+// terminal tool (including git's numbered vimdiff1/nvimdiff2/... variants),
+// or a custom <kind>tool.<name>.cmd whose program does (e.g. emacsclient -nw).
+func isTerminalTool(dir, kind, name string) bool {
+	if t, ok := knownTools[name]; ok {
+		return t.terminal
+	}
+	if strings.HasPrefix(name, "vimdiff") || strings.HasPrefix(name, "nvimdiff") {
+		return true
+	}
+	return NeedsTerminal(strings.Fields(gitConfigGet(dir, kind+"tool."+name+".cmd")))
 }
 
-// resolveTool picks the tool to use for kind ("diff" or "merge"): the
-// configured <kind>.guitool (gui only) or <kind>.tool, else the first
-// installed tool from autodetectOrder. Terminal-only tools are skipped when
-// gui is true. configured reports whether the name came from git config.
+// resolveTool picks the tool to use for kind ("diff" or "merge").
+//
+// The GUI uses <kind>.guitool, then <kind>.tool, then the first installed
+// tool from autodetectOrder, skipping terminal tools throughout.
+//
+// The TUI prefers terminal tools: a configured one (<kind>.tool, then
+// <kind>.guitool), then an installed one, and only then a configured GUI
+// tool or any installed tool.
+//
+// configured reports whether the name came from git config.
 func resolveTool(dir, kind string, gui bool) (name string, configured bool) {
-	keys := []string{kind + ".tool"}
-	if gui {
-		keys = []string{kind + ".guitool", kind + ".tool"}
+	keys := []string{kind + ".guitool", kind + ".tool"}
+	if !gui {
+		keys = []string{kind + ".tool", kind + ".guitool"}
 	}
+	var guiFallback string
 	for _, key := range keys {
 		n := gitConfigGet(dir, key)
-		if n == "" || (gui && isTerminalTool(n)) {
+		if n == "" {
+			continue
+		}
+		terminal := isTerminalTool(dir, kind, n)
+		if gui && terminal {
+			continue
+		}
+		if !gui && !terminal {
+			if guiFallback == "" {
+				guiFallback = n
+			}
 			continue
 		}
 		return n, true
 	}
+	if gui {
+		return detectTool(false), false
+	}
+	if n := detectTool(true); n != "" {
+		return n, false
+	}
+	if guiFallback != "" {
+		return guiFallback, true
+	}
+	return detectTool(false), false
+}
+
+// detectTool returns the first installed tool from autodetectOrder that
+// does (terminal) or doesn't (!terminal) need a terminal, or "".
+func detectTool(terminal bool) string {
 	for _, n := range autodetectOrder {
 		t := knownTools[n]
-		if gui && t.terminal {
+		if t.terminal != terminal {
 			continue
 		}
 		if _, err := exec.LookPath(t.argv[0]); err == nil {
-			return n, false
+			return n
 		}
 	}
-	return "", false
+	return ""
 }
 
 // HasDiffTool reports whether a diff tool is configured or can be detected.

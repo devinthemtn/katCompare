@@ -11,6 +11,7 @@
         <div class="mode-tabs">
             <button class="mode-tab active" data-mode="paths">Files / Directories</button>
             <button class="mode-tab" data-mode="git">Git</button>
+            <button class="btn btn-icon help-btn" id="help-btn" title="Help (?)">?</button>
         </div>
 
         <div class="path-form" id="paths-form">
@@ -96,6 +97,82 @@
             <div class="modal-footer">
                 <span id="copy-summary" class="hint"></span>
                 <button class="btn btn-primary" id="copy-execute-btn">Copy selected</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="help-modal">
+        <div class="modal help-modal" role="dialog" aria-labelledby="help-title">
+            <div class="modal-header">
+                <h2 id="help-title">Help — File Compare</h2>
+                <button class="btn btn-icon" id="help-modal-close">✕</button>
+            </div>
+            <div class="modal-body help-body">
+                <section class="help-section">
+                    <h3>Getting started</h3>
+                    <p>Pick <b>Files / Directories</b> to compare two paths, or <b>Git</b> to compare two refs
+                        (leave the right ref blank to compare against the working tree). Press <b>Compare</b> or
+                        <kbd>Enter</kbd>, then choose a file from the list on the left.</p>
+                </section>
+
+                <section class="help-section">
+                    <h3>Path inputs</h3>
+                    <dl class="help-keys">
+                        <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move through path suggestions</dd>
+                        <dt><kbd>Tab</kbd></dt><dd>Cycle to the next suggestion</dd>
+                        <dt><kbd>Enter</kbd></dt><dd>Accept the suggestion, or run the comparison</dd>
+                        <dt><kbd>Esc</kbd></dt><dd>Close suggestions</dd>
+                        <dt><span class="help-ui">File…</span> <span class="help-ui">Dir…</span></dt><dd>Browse with the system picker</dd>
+                        <dt><span class="help-ui">⇄</span></dt><dd>Swap left and right</dd>
+                    </dl>
+                </section>
+
+                <section class="help-section">
+                    <h3>Viewing a diff</h3>
+                    <dl class="help-keys">
+                        <dt><span class="help-ui">Unified</span></dt><dd>Single column with inserts and deletes inline</dd>
+                        <dt><span class="help-ui">Side-by-side</span></dt><dd>Left and right files in parallel columns</dd>
+                        <dt><span class="help-ui">Merge</span></dt><dd>Tick the changes to apply, choose a target side, and save</dd>
+                        <dt>Line number</dt><dd>Click to open that file in your editor at that line</dd>
+                        <dt><span class="help-ui">Filter files…</span></dt><dd>Narrow the file list by name</dd>
+                        <dt><span class="help-ui">Copy…</span></dt><dd>Copy files that exist on only one side to the other</dd>
+                    </dl>
+                </section>
+
+                <section class="help-section">
+                    <h3>Keyboard shortcuts</h3>
+                    <dl class="help-keys">
+                        <dt><kbd>e</kbd></dt><dd>Edit the right (or working-tree) file</dd>
+                        <dt><kbd>d</kbd></dt><dd>Open the file pair in your external diff tool</dd>
+                        <dt><kbd>?</kbd> / <kbd>F1</kbd></dt><dd>Show this help</dd>
+                        <dt><kbd>Esc</kbd></dt><dd>Close a dialog</dd>
+                    </dl>
+                </section>
+
+                <section class="help-section">
+                    <h3>External tools</h3>
+                    <dl class="help-keys">
+                        <dt>Editor</dt><dd><code>$FILECMP_EDITOR</code>, then <code>$VISUAL</code>, then <code>$EDITOR</code>, then the OS default</dd>
+                        <dt>Diff / merge tool</dt><dd><code>git config diff.tool</code> / <code>merge.tool</code> (e.g. meld, kdiff3)</dd>
+                        <dt><span class="help-ui">Resolve conflict</span></dt><dd>Shown for conflicted files in Git mode; runs <code>git mergetool</code></dd>
+                    </dl>
+                </section>
+
+                <section class="help-section">
+                    <h3>Config files</h3>
+                    <p>File Compare has no config file of its own. Tool choices are read from git config:</p>
+                    <dl class="help-keys help-keys-spaced">
+                        <dt>Global</dt><dd><code>~/.gitconfig</code> or <code>~/.config/git/config</code><br>
+                            Windows: <code>%USERPROFILE%\.gitconfig</code></dd>
+                        <dt>Per repository</dt><dd><code>&lt;repo&gt;/.git/config</code> (overrides global)</dd>
+                        <dt>Keys</dt><dd><code>diff.guitool</code> (GUI only), <code>diff.tool</code>, <code>merge.tool</code>, <code>difftool.&lt;name&gt;.cmd</code></dd>
+                        <dt>Editor vars</dt><dd>Set in your shell profile (<code>~/.bashrc</code>, <code>~/.zshrc</code>, …) — a desktop launcher may not see them</dd>
+                    </dl>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <span class="hint">Press <kbd>Esc</kbd> to close</span>
+                <button class="btn btn-primary" id="help-modal-done">Got it</button>
             </div>
         </div>
     </div>

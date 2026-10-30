@@ -866,16 +866,52 @@ el('copy-execute-btn').addEventListener('click', async () => {
     }
 });
 
+// ---------------------------------------------------------------------------
+// Help modal
+// ---------------------------------------------------------------------------
+
+const helpModal = el('help-modal');
+
+function openHelpModal() {
+    helpModal.classList.remove('hidden');
+    el('help-modal-done').focus();
+}
+
+function closeHelpModal() {
+    helpModal.classList.add('hidden');
+}
+
+el('help-btn').addEventListener('click', openHelpModal);
+el('help-modal-close').addEventListener('click', closeHelpModal);
+el('help-modal-done').addEventListener('click', closeHelpModal);
+helpModal.addEventListener('mousedown', (e) => {
+    if (e.target === helpModal) closeHelpModal();
+});
+
 document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !helpModal.classList.contains('hidden')) {
+        closeHelpModal();
+        return;
+    }
     if (e.key === 'Escape' && !copyModal.classList.contains('hidden')) {
         closeCopyModal();
+        return;
+    }
+    if (e.key === 'F1') {
+        e.preventDefault();
+        openHelpModal();
         return;
     }
     // Single-key shortcuts, ignored while typing or with a modal open.
     const t = e.target;
     if (t.closest?.('input, textarea, select, [contenteditable]')) return;
-    if (!copyModal.classList.contains('hidden') || !state.diff) return;
+    if (!copyModal.classList.contains('hidden') || !helpModal.classList.contains('hidden')) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '?') {
+        openHelpModal();
+        return;
+    }
+    if (!state.diff) return;
     if (e.key === 'e') openInEditor(defaultEditSide(state.diff), 0);
     else if (e.key === 'd') openInDiffTool();
 });

@@ -86,7 +86,7 @@ func TestEditorCommandPrecedence(t *testing.T) {
 	}
 
 	t.Setenv("FILECMP_EDITOR", "")
-	cmd, _ = EditorCommand("/x/f.txt", 0, false)
+	cmd, _ = EditorCommand("/x/f.txt", 0, true)
 	if !reflect.DeepEqual(cmd.Args, []string{"emacsclient", "-c", "/x/f.txt"}) {
 		t.Errorf("VISUAL should be used next, got %v", cmd.Args)
 	}
@@ -113,6 +113,38 @@ func TestEditorCommandSkipsTerminalEditorsInGUI(t *testing.T) {
 	cmd, _ = EditorCommand("/x/f.txt", 0, false)
 	if cmd.Args[0] != "emacsclient" {
 		t.Errorf("terminal editors are fine in the TUI, got %v", cmd.Args)
+	}
+}
+
+func TestEditorCommandTUIPrefersTerminalEditor(t *testing.T) {
+	isolate(t)
+	fakePath(t, false, "emacsclient", "code", "xdg-open")
+
+	t.Setenv("VISUAL", "emacsclient -c -a ''")
+	t.Setenv("EDITOR", "emacsclient -t")
+
+	cmd, _ := EditorCommand("/x/f.txt", 0, false)
+	if !reflect.DeepEqual(cmd.Args, []string{"emacsclient", "-t", "/x/f.txt"}) {
+		t.Errorf("TUI should prefer terminal $EDITOR over GUI $VISUAL, got %v", cmd.Args)
+	}
+	cmd, _ = EditorCommand("/x/f.txt", 0, true)
+	if cmd.Args[1] != "-c" {
+		t.Errorf("GUI should keep using $VISUAL, got %v", cmd.Args)
+	}
+
+	// No terminal editor set: the TUI falls back to the GUI one.
+	t.Setenv("EDITOR", "")
+	cmd, _ = EditorCommand("/x/f.txt", 0, false)
+	if cmd.Args[1] != "-c" {
+		t.Errorf("TUI should fall back to GUI $VISUAL, got %v", cmd.Args)
+	}
+
+	// FILECMP_EDITOR is an explicit choice and wins even if it's a GUI editor.
+	t.Setenv("EDITOR", "emacsclient -t")
+	t.Setenv("FILECMP_EDITOR", "code --wait")
+	cmd, _ = EditorCommand("/x/f.txt", 0, false)
+	if cmd.Args[0] != "code" {
+		t.Errorf("FILECMP_EDITOR should win in the TUI, got %v", cmd.Args)
 	}
 }
 
@@ -344,6 +376,64 @@ func TestGUIPrefersGuiTool(t *testing.T) {
 	}
 	if name, _ := resolveTool("", "diff", false); name != "nvimdiff" {
 		t.Errorf("TUI should use diff.tool, got %q", name)
+	}
+}
+
+func TestTUIPrefersTerminalTool(t *testing.T) {
+	gitconfig := isolate(t)
+	fakePath(t, true, "nvim", "meld")
+
+	// Configured GUI tool: an installed terminal tool wins in the TUI.
+	setGitConfig(t, gitconfig, "diff.tool", "meld")
+	if name, configured := resolveTool("", "diff", false); name != "nvimdiff" || configured {
+		t.Errorf("TUI got (%q, %v), want autodetected nvimdiff", name, configured)
+	}
+	if name, _ := resolveTool("", "diff", true); name != "meld" {
+		t.Errorf("GUI got %q, want meld", name)
+	}
+
+	// A terminal diff.guitool beats autodetection in the TUI.
+	setGitConfig(t, gitconfig, "diff.guitool", "vimdiff2")
+	if name, configured := resolveTool("", "diff", false); name != "vimdiff2" || !configured {
+		t.Errorf("TUI got (%q, %v), want configured vimdiff2", name, configured)
+	}
+}
+
+func TestTUIFallsBackToConfiguredGUITool(t *testing.T) {
+	gitconfig := isolate(t)
+	fakePath(t, true, "meld")
+	setGitConfig(t, gitconfig, "diff.tool", "kdiff3")
+
+	// No terminal tool installed: the configured GUI tool beats autodetect.
+	if name, configured := resolveTool("", "diff", false); name != "kdiff3" || !configured {
+		t.Errorf("TUI got (%q, %v), want configured kdiff3", name, configured)
+	}
+}
+
+func TestCustomToolTerminalDetection(t *testing.T) {
+	gitconfig := isolate(t)
+	fakePath(t, true)
+	setGitConfig(t, gitconfig,
+		"diff.tool", "ediff",
+		"diff.guitool", "ediffgui",
+		"difftool.ediff.cmd", `emacsclient -nw -a "" --eval "(ediff-files \"$LOCAL\" \"$REMOTE\")"`,
+		"difftool.ediffgui.cmd", `emacsclient -c -a "" --eval "(ediff-files \"$LOCAL\" \"$REMOTE\")"`,
+	)
+
+	if !isTerminalTool("", "diff", "ediff") || isTerminalTool("", "diff", "ediffgui") {
+		t.Error("ediff (-nw) should need a terminal, ediffgui (-c) should not")
+	}
+	if name, _ := resolveTool("", "diff", false); name != "ediff" {
+		t.Errorf("TUI got %q, want ediff", name)
+	}
+	if name, _ := resolveTool("", "diff", true); name != "ediffgui" {
+		t.Errorf("GUI got %q, want ediffgui", name)
+	}
+
+	// Without a guitool, the GUI must not fall back to the terminal ediff.
+	exec.Command("git", "config", "--file", gitconfig, "--unset", "diff.guitool").Run() //nolint:errcheck
+	if name, _ := resolveTool("", "diff", true); name != "" {
+		t.Errorf("GUI got %q, want no tool", name)
 	}
 }
 

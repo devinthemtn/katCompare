@@ -286,7 +286,7 @@ Both the GUI and the TUI can hand the current file off to other apps.
 3. `$EDITOR`
 4. the OS default app (`xdg-open` / `open` / `start`)
 
-The value can include arguments, for example `FILECMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
+The value can include arguments, for example `FILECMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI prefers terminal editors: if `$VISUAL` is a GUI editor (e.g. `emacsclient -c`) and `$EDITOR` runs in a terminal (e.g. `emacsclient -t`), the TUI uses `$EDITOR`. `$FILECMP_EDITOR` always wins. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
 
 **Diff and merge tools** come from your git config, so set them once:
 
@@ -295,6 +295,8 @@ git config --global diff.tool meld       # or kdiff3, vscode, nvimdiff, bc, ...
 git config --global merge.tool meld
 git config --global diff.guitool meld    # optional: GUI-only choice (e.g. diff.tool = nvimdiff for the TUI)
 ```
+
+The **TUI prefers terminal tools** (vimdiff, nvimdiff, or a custom `difftool.<name>.cmd` that runs a terminal program such as `emacsclient -nw`). It checks `diff.tool`, then `diff.guitool`, then any installed nvim/vim. It only uses a GUI tool when it can't find a terminal one. The **GUI** checks `diff.guitool`, then `diff.tool`, and always skips terminal tools. Merge tools follow the same rules with `merge.tool` / `merge.guitool`.
 
 - **Git mode** runs `git difftool <ref> [<ref>] -- <file>`.
 - **Plain files and folders** don't need to be in a git repository. Files are passed to `git difftool --no-index`, which works anywhere. If git isn't installed or no tool is configured, the app launches the tool directly: a `difftool.<name>.cmd` you've defined, or the first of meld / kdiff3 / VS Code it finds (nvim/vim `-d` too, but only in the TUI). A file that exists on only one side is compared against an empty file.
