@@ -7,7 +7,7 @@
 # Arguments that are existing paths are translated to Windows paths, so
 # "filecmp-win ./a ./b" works the same as "filecmp ./a ./b".
 #
-# @WIN_DIR@ is replaced by "make install" with the Windows install directory.
+# @WIN_DIR@ is replaced by "task install" with the Windows install directory.
 WIN_DIR="@WIN_DIR@"
 
 exe="$WIN_DIR/filecmp-gui.exe"
@@ -19,7 +19,7 @@ if [ "$1" = "--tui" ]; then
 fi
 
 if [ ! -x "$exe" ]; then
-	echo "filecmp-win: $exe not found (re-run 'make install')" >&2
+	echo "filecmp-win: $exe not found (re-run 'task install')" >&2
 	exit 1
 fi
 

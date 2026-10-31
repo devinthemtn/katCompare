@@ -30,23 +30,23 @@ File Compare is a fast, color-coded diff and merge tool written in Go that is cl
 
 ### Build and install both in one step
 
-From the repository root (needs the GUI prerequisites below):
+From the repository root (needs [go-task](https://taskfile.dev) — `go install github.com/go-task/task/v3/cmd/task@latest` — plus the GUI prerequisites below):
 
 ```bash
-make install                          # builds TUI + GUI, installs to $(go env GOPATH)/bin
-make install BINDIR=~/.local/bin      # or pick another directory on your PATH
+task install                          # builds TUI + GUI, installs to $(go env GOPATH)/bin
+task install BINDIR=~/.local/bin      # or pick another directory on your PATH
 ```
 
-This installs `filecmp` (TUI) and `filecmp-gui` (GUI). Use `make install-tui` / `make install-gui` for just one, and `make uninstall` to remove them.
+This installs `filecmp` (TUI) and `filecmp-gui` (GUI). Use `task install-tui` / `task install-gui` for just one, and `task uninstall` to remove them.
 
-**Under WSL**, `make install` also cross-compiles the Windows builds, installs `filecmp.exe` and `filecmp-gui.exe` to `%LOCALAPPDATA%\Programs\filecmp`, and adds a `filecmp-win` wrapper to `BINDIR`:
+**Under WSL**, `task install` also cross-compiles the Windows builds, installs `filecmp.exe` and `filecmp-gui.exe` to `%LOCALAPPDATA%\Programs\filecmp`, and adds a `filecmp-win` wrapper to `BINDIR`:
 
 ```bash
 filecmp-win ./a ./b          # Windows GUI in a native window
 filecmp-win --tui ./a ./b    # Windows TUI in this terminal
 ```
 
-The wrapper converts path arguments to Windows paths. Use `make install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `make build-windows` / `make build-gui-windows` just build them (output goes to `build/`).
+The wrapper converts path arguments to Windows paths. Use `task install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `task build-windows` / `task build-gui-windows` just build them (output goes to `build/`).
 
 ### Desktop GUI
 
@@ -127,8 +127,8 @@ If your system only has WebKitGTK 4.0 (older distros), remove the `build:tags` l
 **Cross-compiling from Linux/WSL** needs no extra compiler, since the Windows build doesn't use cgo. From the repository root:
 
 ```bash
-make build-gui-windows     # → build/filecmp-gui-windows-amd64.exe
-make build-win-installer   # → build/filecmp-gui-windows-amd64-installer.exe (needs: sudo apt install nsis)
+task build-gui-windows     # → build/filecmp-gui-windows-amd64.exe
+task build-win-installer   # → build/filecmp-gui-windows-amd64-installer.exe (needs: sudo apt install nsis)
 ```
 
 The installer installs File Compare for the current user into `%LOCALAPPDATA%\Programs\File Compare`, with no admin prompt. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. It's unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. Its product name and version come from the `info` section of `filecmp-gui/wails.json`. Bump `productVersion` there when you release.
@@ -169,7 +169,7 @@ The TUI is a full-screen, keyboard-driven interface built with [Bubble Tea](http
 ```bash
 git clone <repository-url>
 cd fileCmp-golang-wails
-go build -o filecmp     # or: make deps && make build
+go build -o filecmp     # or: task deps && task build
 ```
 
 ### Command Line Options
@@ -200,23 +200,23 @@ go build -o filecmp     # or: make deps && make build
 ./filecmp --help
 ```
 
-### Quick Start with Make
+### Quick Start with Task
 
 ```bash
 # Install dependencies and build
-make deps && make build
+task deps && task build
 
 # Try the demo with example files
-make demo
+task demo
 
 # Demo the merge functionality
-make demo-merge
+task demo-merge
 
 # Quick test with sample files
-make run-files
+task run-files
 
 # Quick test with sample directories
-make run-dirs
+task run-dirs
 ```
 
 ### Interactive Controls
@@ -454,26 +454,28 @@ MIT License - see [LICENSE](LICENSE) file for details.
 Run the included test suite:
 ```bash
 # Run Go unit tests
-make test
+task test
 
 # Try with examples
-make demo
+task demo
 ```
 
 ## 🚀 Building from Source
+
+Build tasks use [go-task](https://taskfile.dev) (`go install github.com/go-task/task/v3/cmd/task@latest`); run `task --list` to see them all.
 
 ```bash
 # Clone and build
 git clone https://github.com/devinthemtn/fileCmp-golang-wails.git
 cd fileCmp-golang-wails
-make deps
-make build
+task deps
+task build
 
 # Or build for multiple platforms
-make build-all
+task build-all
 
 # Install TUI + GUI to $(go env GOPATH)/bin (optional)
-make install
+task install
 ```
 
 ## 🤝 Contributing
