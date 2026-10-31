@@ -50,14 +50,13 @@ The wrapper converts path arguments to Windows paths. Use `task install WSL=` to
 
 ### Desktop GUI
 
-Requires Go 1.25+, Node.js, and the [Wails v2 CLI](https://wails.io):
+Requires Go 1.25+, Node.js, [go-task](https://taskfile.dev) and the [Wails v3 CLI](https://v3.wails.io):
 
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
-cd filecmp-gui
-wails build            # Linux: needs GTK/WebKit -dev packages (see below)
-./build/bin/filecmp-gui
-./build/bin/filecmp-gui old.yaml new.yaml   # pre-fill both paths and compare right away
+go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+task build-gui         # Linux: needs GTK/WebKit -dev packages (see below)
+./filecmp-gui/bin/filecmp-gui
+./filecmp-gui/bin/filecmp-gui old.yaml new.yaml   # pre-fill both paths and compare right away
 ```
 
 Pick the **Files / Directories** tab to compare two paths (type them, use the native file/folder picker, or pass them on the command line), or the **Git** tab to compare refs — leave the right ref blank to compare against the working tree.
@@ -91,10 +90,11 @@ The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It imports the same dif
 
 ### Building the GUI
 
-Prerequisites: Go 1.25+, Node.js (for the Vite-built frontend), and the Wails v2 CLI:
+Prerequisites: Go 1.25+, Node.js (for the Vite-built frontend), [go-task](https://taskfile.dev), and the Wails v3 CLI:
 
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+go install github.com/go-task/task/v3/cmd/task@latest
+go install github.com/wailsapp/wails/v3/cmd/wails3@latest
 ```
 
 **Linux only:** Wails also needs GTK/WebKit *development* headers to compile against (having the runtime libraries installed isn't enough — `pkg-config` needs the `-dev` packages, or the Go build fails with a cgo/`pkg-config` error). On Debian/Ubuntu:
@@ -103,26 +103,27 @@ go install github.com/wailsapp/wails/v2/cmd/wails@latest
 sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
-Run `wails doctor` to check what's missing on your system.
+Run `wails3 doctor` to check what's missing on your system.
 
 Then, from the repo root:
 
 ```bash
-cd filecmp-gui
-wails dev      # live development with hot reload
-wails build    # production binary in build/bin/
+task dev-gui     # live development with hot reload
+task build-gui   # production binary in filecmp-gui/bin/
+task install-gui # build and install to $(go env GOPATH)/bin (+ Linux launcher entry)
 ```
-then you can just copy the bin from the 'build/bin' directory into your personal bin directory.
 
-#### Linux: WebKitGTK version
+The GUI's own Wails v3 Taskfiles live in `filecmp-gui/` (`Taskfile.yml` and `build/*/Taskfile.yml`), so `wails3 build` / `wails3 dev` also work from inside that directory.
 
-Wails v2 links against WebKitGTK 4.0 unless built with the `webkit2_41` tag. Most current distros (e.g. Ubuntu 24.04+) only ship WebKitGTK 4.1, so this project sets that tag by default in `wails.json` (`"build:tags": "webkit2_41"`) — plain `wails dev` / `wails build` just work. The tag has no effect on macOS or Windows builds.
+#### Linux: GTK version
 
-If your system only has WebKitGTK 4.0 (older distros), remove the `build:tags` line from `wails.json`, or the Go build fails with a `pkg-config` error for `webkit2gtk-4.1`. Check what you have with `pkg-config --exists webkit2gtk-4.0 && echo 4.0` / `pkg-config --exists webkit2gtk-4.1 && echo 4.1`.
+Wails v3 defaults to GTK4 + WebKitGTK 6.0 on Linux. This project builds with the `gtk3` tag instead (set as the default `EXTRA_TAGS` in `filecmp-gui/build/linux/Taskfile.yml`), so it links against GTK3 + WebKitGTK 4.1 — the packages above, available on most current distros (e.g. Ubuntu 24.04). To build against GTK4 instead, install `libgtk-4-dev libwebkitgtk-6.0-dev` and remove that `gtk3` default.
+
+Because of the tag, plain `go build ./...` / `go vet ./...` at the repo root fail on Linux in the `filecmp-gui` package; use `go build -tags gtk3 ./...` / `go test -tags gtk3 ./...` (the tasks, including `task test`, handle this for you).
 
 #### Building for Windows
 
-**On Windows**, with Go and the Wails CLI installed, just run `wails build` in `filecmp-gui/` — no extra setup needed. It uses WebView2 (present by default on current Windows 10/11).
+**On Windows**, with Go, go-task and the Wails v3 CLI installed, just run `task build-gui` (or `wails3 build` in `filecmp-gui/`) — no extra setup needed. It uses WebView2 (present by default on current Windows 10/11).
 
 **Cross-compiling from Linux/WSL** needs no extra compiler, since the Windows build doesn't use cgo. From the repository root:
 
@@ -131,24 +132,26 @@ task build-gui-windows     # → build/filecmp-gui-windows-amd64.exe
 task build-win-installer   # → build/filecmp-gui-windows-amd64-installer.exe (needs: sudo apt install nsis)
 ```
 
-The installer installs File Compare for the current user into `%LOCALAPPDATA%\Programs\File Compare`, with no admin prompt. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. It's unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. Its product name and version come from the `info` section of `filecmp-gui/wails.json`. Bump `productVersion` there when you release.
-
-By default the exe downloads WebView2 on first run if it's missing. To bundle it instead (fully offline install), pass `-webview2 embed` to `wails build`.
+The installer installs File Compare for the current user into `%LOCALAPPDATA%\Programs\File Compare`, with no admin prompt. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. It's unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. Its product name and version come from the `info` section of `filecmp-gui/build/config.yml`. Bump `version` there when you release, then run `task update-gui-assets` to regenerate the derived files (`build/windows/info.json`, the NSIS defines, macOS `Info.plist`). That regeneration overwrites `build/windows/nsis/project.nsi`, so re-add the `MUI_FINISHPAGE_RUN` line (the "Run File Compare" checkbox) afterwards. The installer also installs WebView2 if it's missing.
 
 #### Building for macOS
 
-Wails does not support cross-compiling to macOS from Linux or Windows (it needs Apple's Cocoa/WebKit frameworks and `clang` with the macOS SDK). Build directly on a Mac with `wails build`.
+Wails does not support cross-compiling to macOS from Linux or Windows (it needs Apple's Cocoa/WebKit frameworks and `clang` with the macOS SDK). Build directly on a Mac with `task build-gui`.
 
 ### GUI project structure
 
 ```
 filecmp-gui/
-├── app.go              # Wails-bound backend: LoadComparison, LoadGitComparison,
+├── app.go               # Wails service: LoadComparison, LoadGitComparison,
 │                        # GetDiff, SaveMerge, CopyFiles, SuggestPaths, dialogs
-├── main.go              # wails.Run(...) entrypoint
+├── main.go              # application.New(...) entrypoint
 │                        # (logic packages are imported from the root internal/)
+├── Taskfile.yml         # Wails v3 build tasks (called by the root Taskfile)
+├── build/               # config.yml (product info), icons, per-platform Taskfiles,
+│                        # NSIS installer, Linux .desktop template
 └── frontend/
     ├── index.html
+    ├── bindings/        # generated by wails3 (gitignored)
     └── src/
         ├── main.js      # view state machine, rendering, all UI logic
         └── style.css

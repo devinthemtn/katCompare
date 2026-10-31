@@ -10,8 +10,11 @@ vars:
   MAIN_FILE: main.go
   GUI_DIR: filecmp-gui
   GUI_BINARY: filecmp-gui
-  WAILS: wails
-  WAILS_HINT: "wails CLI not found. Install it with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+  GUI_BIN_DIR: '{{.GUI_DIR}}/bin'
+  WAILS_HINT: "wails3 CLI not found. Install it with: go install github.com/wailsapp/wails/v3/cmd/wails3@latest"
+  # GUI tasks run the Wails v3 Taskfile in filecmp-gui/ as a sub-process,
+  # since its tasks expect ROOT_DIR to be filecmp-gui/.
+  GUI_TASK: '"{{.TASK_EXE}}" -d {{.GUI_DIR}}'
   # Version stamped into both binaries (override with: task VERSION=v1.2.3)
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
@@ -38,7 +41,9 @@ vars:
 tasks:
   default:
     desc: Build both TUI and GUI
-    deps: [build, build-gui]
+    cmds:
+      - task: build
+      - task: build-gui
 
   build:
     desc: Build the TUI
@@ -47,14 +52,21 @@ tasks:
       - 'echo "✅ Build complete: ./{{.BINARY_NAME}}{{.EXE}}"'
 
   build-gui:
-    desc: Build the Wails GUI (needs wails CLI)
+    desc: Build the Wails GUI (needs wails3 CLI)
     preconditions:
-      - sh: command -v {{.WAILS}}
+      - sh: command -v wails3
         msg: '{{.WAILS_HINT}}'
-    dir: '{{.GUI_DIR}}'
     cmds:
-      - '{{.WAILS}} build -clean -ldflags "{{.LDFLAGS}}"'
-      - 'echo "✅ Build complete: ./{{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}{{.EXE}}"'
+      - '{{.GUI_TASK}} build VERSION={{.VERSION}}'
+      - 'echo "✅ Build complete: ./{{.GUI_BIN_DIR}}/{{.GUI_BINARY}}{{.EXE}}"'
+
+  dev-gui:
+    desc: Run the GUI in Wails dev mode (live reload)
+    preconditions:
+      - sh: command -v wails3
+        msg: '{{.WAILS_HINT}}'
+    cmds:
+      - '{{.GUI_TASK}} dev'
 
   build-windows:
     desc: Cross-compile the TUI for Windows
@@ -63,35 +75,42 @@ tasks:
       - GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.WIN_TUI}} {{.MAIN_FILE}}
       - 'echo "✅ Build complete: ./{{.WIN_TUI}}"'
 
-  # The exe is copied out of the Wails build/bin directory so a later
-  # "build-gui" (which cleans it) can't delete it.
   build-gui-windows:
     desc: Cross-compile the GUI for Windows
     preconditions:
-      - sh: command -v {{.WAILS}}
+      - sh: command -v wails3
         msg: '{{.WAILS_HINT}}'
     cmds:
-      - cd {{.GUI_DIR}} && CGO_ENABLED=0 {{.WAILS}} build -platform windows/amd64 -ldflags "{{.LDFLAGS}}"
+      - '{{.GUI_TASK}} windows:build ARCH=amd64 VERSION={{.VERSION}}'
       - mkdir -p {{.BUILD_DIR}}
-      - cp {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}.exe {{.WIN_GUI}}
+      - cp {{.GUI_BIN_DIR}}/{{.GUI_BINARY}}.exe {{.WIN_GUI}}
       - 'echo "✅ Build complete: ./{{.WIN_GUI}}"'
 
   # Per-user installer: no admin prompt; installs to
   # %LOCALAPPDATA%\Programs\File Compare with Start menu + desktop shortcuts.
   # The installer's product name/version come from the "info" section of
-  # filecmp-gui/wails.json.
+  # filecmp-gui/build/config.yml (after editing it, run
+  # "task update-gui-assets").
   build-win-installer:
     desc: Build a per-user Windows installer (needs NSIS)
     preconditions:
-      - sh: command -v {{.WAILS}}
+      - sh: command -v wails3
         msg: '{{.WAILS_HINT}}'
       - sh: command -v makensis
         msg: "makensis not found. Install it with: sudo apt install nsis"
     cmds:
-      - cd {{.GUI_DIR}} && CGO_ENABLED=0 {{.WAILS}} build -platform windows/amd64 -nsis -installscope user -ldflags "{{.LDFLAGS}}"
+      - '{{.GUI_TASK}} windows:package INSTALL_SCOPE=user ARCH=amd64 VERSION={{.VERSION}}'
       - mkdir -p {{.BUILD_DIR}}
-      - cp {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}-amd64-installer.exe {{.WIN_INSTALLER}}
+      - cp {{.GUI_BIN_DIR}}/{{.GUI_BINARY}}-amd64-installer.exe {{.WIN_INSTALLER}}
       - 'echo "✅ Installer complete: ./{{.WIN_INSTALLER}}"'
+
+  # Regenerates Info.plist, info.json, the NSIS defines, etc. from
+  # filecmp-gui/build/config.yml. This overwrites manual edits to those files
+  # (re-check MUI_FINISHPAGE_RUN in build/windows/nsis/project.nsi afterwards).
+  update-gui-assets:
+    desc: Regenerate GUI build assets from filecmp-gui/build/config.yml
+    cmds:
+      - '{{.GUI_TASK}} common:update:build-assets'
 
   build-release:
     desc: Build optimized release version of the TUI
@@ -120,7 +139,8 @@ tasks:
   test:
     desc: Run tests
     cmds:
-      - go test ./...
+      # gtk3: the GUI package links GTK3/webkit2gtk-4.1 on Linux (no-op elsewhere)
+      - go test -tags gtk3 ./...
 
   run:
     desc: Run the TUI in interactive mode
@@ -174,12 +194,13 @@ tasks:
     cmds:
       - rm -f {{.BINARY_NAME}} {{.BINARY_NAME}}.exe
       - rm -rf {{.BUILD_DIR}}
-      - rm -rf {{.GUI_DIR}}/build/bin
+      - rm -rf {{.GUI_BIN_DIR}}
 
   install:
     desc: Build and install TUI + GUI to BINDIR (under WSL also the Windows builds; skip with WSL=)
-    deps: [install-tui, install-gui]
     cmds:
+      - task: install-tui
+      - task: install-gui
       - task: install-windows
         if: '[ -n "{{.WSL}}" ]'
       - 'echo "✅ Installation complete. Run {{.BINARY_NAME}} (TUI) or {{.GUI_BINARY}} (GUI) from anywhere"'
@@ -196,21 +217,21 @@ tasks:
     desc: Build and install only the GUI (plus a launcher entry on Linux)
     deps: [build-gui]
     cmds:
-      - install -Dm755 {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
+      - install -Dm755 {{.GUI_BIN_DIR}}/{{.GUI_BINARY}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
       - cmd: install -Dm644 {{.GUI_DIR}}/build/appicon.svg {{.GUI_ICON}}
         platforms: [linux]
       - cmd: >-
           sed -e "s|@BIN@|{{.BINDIR}}/{{.GUI_BINARY}}|" -e "s|@ICON@|{{.GUI_ICON}}|"
-          {{.GUI_DIR}}/build/linux/{{.GUI_BINARY}}.desktop > {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}.desktop
+          {{.GUI_DIR}}/build/linux/{{.GUI_BINARY}}.desktop.in > {{.GUI_BIN_DIR}}/{{.GUI_BINARY}}.desktop
         platforms: [linux]
-      - cmd: install -Dm644 {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}.desktop {{.DATADIR}}/applications/{{.GUI_BINARY}}.desktop
+      - cmd: install -Dm644 {{.GUI_BIN_DIR}}/{{.GUI_BINARY}}.desktop {{.DATADIR}}/applications/{{.GUI_BINARY}}.desktop
         platforms: [linux]
       - cmd: if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q {{.DATADIR}}/applications; fi
         platforms: [linux]
 
   install-windows:
     desc: (WSL) Install the Windows TUI + GUI and the filecmp-win wrapper
-    deps: [build-windows, build-gui-windows]
+    deps: [build-windows]
     vars:
       WIN_INSTALL_DIR:
         sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/filecmp"
@@ -218,6 +239,7 @@ tasks:
       - sh: case "{{.WIN_INSTALL_DIR}}" in /mnt/*) ;; *) exit 1;; esac
         msg: "Could not locate %LOCALAPPDATA% (set WIN_INSTALL_DIR=/mnt/c/...)"
     cmds:
+      - task: build-gui-windows
       - install -Dm755 {{.WIN_TUI}} "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe"
       - install -Dm755 {{.WIN_GUI}} "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"
       - mkdir -p {{.BINDIR}}
