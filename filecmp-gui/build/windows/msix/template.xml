@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MsixPackagingToolTemplate
+    xmlns="http://schemas.microsoft.com/msix/packaging/msixpackagingtool/template/2022">
+    <Settings
+        AllowTelemetry="false"
+        ApplyACLsToPackageFiles="true"
+        GenerateCommandLineFile="true"
+        AllowPromptForPassword="false">
+    </Settings>
+    <Installer
+        Path="filecmp-gui"
+        Arguments=""
+        InstallLocation="C:\Program Files\Thomas Koefod\File Compare">
+    </Installer>
+    <PackageInformation
+        PackageName="File Compare"
+        PackageDisplayName="File Compare"
+        PublisherName="CN=Thomas Koefod"
+        PublisherDisplayName="Thomas Koefod"
+        Version="1.2.0.0"
+        PackageDescription="Compare files and directories side by side">
+        <Capabilities>
+            <Capability Name="runFullTrust" />
+            
+        </Capabilities>
+        <Applications>
+            <Application
+                Id="com.koefod.filecmp-gui"
+                Description="Compare files and directories side by side"
+                DisplayName="File Compare"
+                ExecutableName="filecmp-gui"
+                EntryPoint="Windows.FullTrustApplication">
+                
+            </Application>
+        </Applications>
+        <Resources>
+            <Resource Language="en-us" />
+        </Resources>
+        <Dependencies>
+            <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+        </Dependencies>
+        <Properties>
+            <Framework>false</Framework>
+            <DisplayName>File Compare</DisplayName>
+            <PublisherDisplayName>Thomas Koefod</PublisherDisplayName>
+            <Description>Compare files and directories side by side</Description>
+            <Logo>Assets\AppIcon.png</Logo>
+        </Properties>
+    </PackageInformation>
+    <SaveLocation PackagePath="filecmp-gui.msix" />
+    <PackageIntegrity>
+        <CertificatePath></CertificatePath>
+    </PackageIntegrity>
+</MsixPackagingToolTemplate>

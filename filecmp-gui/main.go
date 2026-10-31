@@ -3,21 +3,20 @@ package main
 import (
 	"embed"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// icon is the Linux window icon (Windows uses build/windows/icon.ico).
+// icon is the application/window icon on Linux (Windows uses the icon
+// embedded from build/windows/icon.ico).
 //
 //go:embed build/appicon.png
 var icon []byte
@@ -34,32 +33,36 @@ func main() {
 		}
 	}
 
-	// Create an instance of the app structure
-	app := NewApp(initialPaths(os.Args[1:]))
-
-	// Create application with options
-	err := wails.Run(&options.App{
-		Title:     "File Compare",
-		Width:     1280,
-		Height:    860,
-		MinWidth:  900,
-		MinHeight: 600,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	app := application.New(application.Options{
+		Name:        "filecmp-gui",
+		Description: "Compare files and directories side by side",
+		Icon:        icon,
+		Services: []application.Service{
+			application.NewService(NewApp(initialPaths(os.Args[1:]))),
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
-		Bind: []interface{}{
-			app,
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
-		Linux: &linux.Options{
-			Icon:        icon,
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		Linux: application.LinuxOptions{
 			ProgramName: "filecmp-gui",
 		},
 	})
 
-	if err != nil {
-		println("Error:", err.Error())
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "File Compare",
+		Width:            1280,
+		Height:           860,
+		MinWidth:         900,
+		MinHeight:        600,
+		BackgroundColour: application.NewRGB(27, 38, 54),
+		URL:              "/",
+	})
+
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
 	}
 }
 

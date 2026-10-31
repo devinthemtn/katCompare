@@ -16,8 +16,8 @@ import {
     OpenInDiffTool,
     OpenDirsInDiffTool,
     ResolveConflict,
-} from '../wailsjs/go/main/App';
-import { EventsOn } from '../wailsjs/runtime/runtime';
+} from '../bindings/golang-fileCmp/filecmp-gui/app.js';
+import { Events } from '@wailsio/runtime';
 
 // ---------------------------------------------------------------------------
 // State
@@ -621,7 +621,8 @@ async function resolveConflict() {
     }
 }
 
-EventsOn('conflict-resolved', (relPath, errMsg) => {
+Events.On('conflict-resolved', (ev) => {
+    const [relPath, errMsg] = ev.data;
     if (errMsg) setStatus(`Merge tool exited: ${errMsg}`, 'error');
     else setStatus(`Merge tool finished for ${relPath}.`, 'success');
     reloadComparison();

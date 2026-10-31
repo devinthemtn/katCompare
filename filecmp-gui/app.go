@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,15 +15,13 @@ import (
 	"golang-fileCmp/internal/merge"
 	"golang-fileCmp/internal/proc"
 
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// App is the Wails-bound backend. It holds the currently loaded comparison
+// App is the Wails service bound to the frontend. It holds the currently loaded comparison
 // so the frontend can request diffs / trigger merges / copies by relative
 // path without re-sending file content on every call.
 type App struct {
-	ctx context.Context
-
 	fileManager *file.Manager
 	differ      *differ.Differ
 	merger      *merge.Merger
@@ -55,8 +52,12 @@ func NewApp(initialPaths []string) *App {
 	}
 }
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+// conflictResolvedEvent is sent when a git mergetool launched by
+// ResolveConflict exits. Data: [relPath, errMsg].
+const conflictResolvedEvent = "conflict-resolved"
+
+func init() {
+	application.RegisterEvent[[]string](conflictResolvedEvent)
 }
 
 // ---- DTOs exposed to the frontend ----
@@ -127,15 +128,19 @@ type MergeSaveRequest struct {
 // ---- Dialogs ----
 
 func (a *App) SelectDirectory() (string, error) {
-	return wailsRuntime.OpenDirectoryDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "Select Directory",
-	})
+	return application.Get().Dialog.OpenFile().
+		SetTitle("Select Directory").
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		CanCreateDirectories(true).
+		PromptForSingleSelection()
 }
 
 func (a *App) SelectFile() (string, error) {
-	return wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
-		Title: "Select File",
-	})
+	return application.Get().Dialog.OpenFile().
+		SetTitle("Select File").
+		CanChooseFiles(true).
+		PromptForSingleSelection()
 }
 
 // ---- Loading comparisons ----
@@ -763,7 +768,7 @@ func (a *App) ResolveConflict(relPath string) error {
 		if err != nil {
 			msg = err.Error()
 		}
-		wailsRuntime.EventsEmit(a.ctx, "conflict-resolved", relPath, msg)
+		application.Get().Event.Emit(conflictResolvedEvent, []string{relPath, msg})
 	}()
 	return nil
 }
