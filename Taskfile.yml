@@ -1,0 +1,237 @@
+# Build tasks for filecmp (TUI) and filecmp-gui (Wails GUI).
+# Requires go-task: go install github.com/go-task/task/v3/cmd/task@latest
+# Run "task --list" to see all tasks. Variables can be overridden on the
+# command line, e.g.: task install BINDIR=~/.local/bin
+version: '3'
+
+vars:
+  BINARY_NAME: filecmp
+  BUILD_DIR: build
+  MAIN_FILE: main.go
+  GUI_DIR: filecmp-gui
+  GUI_BINARY: filecmp-gui
+  WAILS: wails
+  WAILS_HINT: "wails CLI not found. Install it with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+  # Version stamped into both binaries (override with: task VERSION=v1.2.3)
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -X main.version={{.VERSION}}
+  # Install location (override with: task install BINDIR=/usr/local/bin)
+  BINDIR:
+    sh: echo "$(go env GOPATH)/bin"
+  # Linux launcher entry + icon location (override with: task install DATADIR=...)
+  DATADIR: '{{.HOME}}/.local/share'
+  GUI_ICON: '{{.DATADIR}}/icons/hicolor/scalable/apps/{{.GUI_BINARY}}.svg'
+  # Executable suffix for the host (".exe" when building natively on Windows)
+  EXE:
+    sh: go env GOEXE
+  # Windows builds (cross-compiled; no cgo needed)
+  WIN_TUI: '{{.BUILD_DIR}}/{{.BINARY_NAME}}-windows-amd64.exe'
+  WIN_GUI: '{{.BUILD_DIR}}/{{.GUI_BINARY}}-windows-amd64.exe'
+  WIN_INSTALLER: '{{.BUILD_DIR}}/{{.GUI_BINARY}}-windows-amd64-installer.exe'
+  # Under WSL, "task install" also installs the Windows builds into
+  # WIN_INSTALL_DIR (default: %LOCALAPPDATA%\Programs\filecmp) and a
+  # "filecmp-win" wrapper into BINDIR. Disable with: task install WSL=
+  WSL:
+    sh: grep -qi microsoft /proc/version 2>/dev/null && echo 1 || true
+
+tasks:
+  default:
+    desc: Build both TUI and GUI
+    deps: [build, build-gui]
+
+  build:
+    desc: Build the TUI
+    cmds:
+      - go build -ldflags="{{.LDFLAGS}}" -o {{.BINARY_NAME}}{{.EXE}} {{.MAIN_FILE}}
+      - 'echo "✅ Build complete: ./{{.BINARY_NAME}}{{.EXE}}"'
+
+  build-gui:
+    desc: Build the Wails GUI (needs wails CLI)
+    preconditions:
+      - sh: command -v {{.WAILS}}
+        msg: '{{.WAILS_HINT}}'
+    dir: '{{.GUI_DIR}}'
+    cmds:
+      - '{{.WAILS}} build -clean -ldflags "{{.LDFLAGS}}"'
+      - 'echo "✅ Build complete: ./{{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}{{.EXE}}"'
+
+  build-windows:
+    desc: Cross-compile the TUI for Windows
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.WIN_TUI}} {{.MAIN_FILE}}
+      - 'echo "✅ Build complete: ./{{.WIN_TUI}}"'
+
+  # The exe is copied out of the Wails build/bin directory so a later
+  # "build-gui" (which cleans it) can't delete it.
+  build-gui-windows:
+    desc: Cross-compile the GUI for Windows
+    preconditions:
+      - sh: command -v {{.WAILS}}
+        msg: '{{.WAILS_HINT}}'
+    cmds:
+      - cd {{.GUI_DIR}} && CGO_ENABLED=0 {{.WAILS}} build -platform windows/amd64 -ldflags "{{.LDFLAGS}}"
+      - mkdir -p {{.BUILD_DIR}}
+      - cp {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}.exe {{.WIN_GUI}}
+      - 'echo "✅ Build complete: ./{{.WIN_GUI}}"'
+
+  # Per-user installer: no admin prompt; installs to
+  # %LOCALAPPDATA%\Programs\File Compare with Start menu + desktop shortcuts.
+  # The installer's product name/version come from the "info" section of
+  # filecmp-gui/wails.json.
+  build-win-installer:
+    desc: Build a per-user Windows installer (needs NSIS)
+    preconditions:
+      - sh: command -v {{.WAILS}}
+        msg: '{{.WAILS_HINT}}'
+      - sh: command -v makensis
+        msg: "makensis not found. Install it with: sudo apt install nsis"
+    cmds:
+      - cd {{.GUI_DIR}} && CGO_ENABLED=0 {{.WAILS}} build -platform windows/amd64 -nsis -installscope user -ldflags "{{.LDFLAGS}}"
+      - mkdir -p {{.BUILD_DIR}}
+      - cp {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}-amd64-installer.exe {{.WIN_INSTALLER}}
+      - 'echo "✅ Installer complete: ./{{.WIN_INSTALLER}}"'
+
+  build-release:
+    desc: Build optimized release version of the TUI
+    cmds:
+      - go build -ldflags="-s -w {{.LDFLAGS}}" -o {{.BINARY_NAME}}{{.EXE}} {{.MAIN_FILE}}
+      - 'echo "✅ Release build complete: ./{{.BINARY_NAME}}{{.EXE}}"'
+
+  build-all:
+    desc: Build the TUI for multiple platforms (+ Windows GUI)
+    deps: [build-gui-windows]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - GOOS=linux GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 {{.MAIN_FILE}}
+      - GOOS=darwin GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 {{.MAIN_FILE}}
+      - GOOS=darwin GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 {{.MAIN_FILE}}
+      - GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.WIN_TUI}} {{.MAIN_FILE}}
+      - 'echo "✅ Multi-platform builds complete in {{.BUILD_DIR}}/"'
+      - ls -la {{.BUILD_DIR}}/
+
+  deps:
+    desc: Install Go dependencies
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./...
+
+  run:
+    desc: Run the TUI in interactive mode
+    cmds:
+      - ./{{.BINARY_NAME}}
+
+  run-files:
+    desc: Run the TUI with example files
+    cmds:
+      - ./{{.BINARY_NAME}} examples/file1.txt examples/file2.txt
+
+  run-dirs:
+    desc: Run the TUI with example directories
+    cmds:
+      - ./{{.BINARY_NAME}} examples/project-v1 examples/project-v2
+
+  demo:
+    desc: Run demo script
+    cmds: [./test-demo.sh]
+
+  demo-merge:
+    desc: Run comprehensive merge demo
+    cmds: [./merge-example.sh]
+
+  demo-merge-simple:
+    desc: Run simple merge demo
+    cmds: [./demo-merge.sh]
+
+  demo-all-files:
+    desc: Run all files demo (common + unique)
+    cmds: [./demo-all-files.sh]
+
+  demo-copy:
+    desc: Run copy functionality demo
+    cmds: [./demo-copy-files.sh]
+
+  demo-side-by-side:
+    desc: Run side-by-side view demo
+    cmds: [./demo-side-by-side.sh]
+
+  test-responsive:
+    desc: Test responsive design at different widths
+    cmds: [./test-responsive.sh]
+
+  test-width-fix:
+    desc: Test selected file status width fix
+    cmds: [./test-width-fix.sh]
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f {{.BINARY_NAME}} {{.BINARY_NAME}}.exe
+      - rm -rf {{.BUILD_DIR}}
+      - rm -rf {{.GUI_DIR}}/build/bin
+
+  install:
+    desc: Build and install TUI + GUI to BINDIR (under WSL also the Windows builds; skip with WSL=)
+    deps: [install-tui, install-gui]
+    cmds:
+      - task: install-windows
+        if: '[ -n "{{.WSL}}" ]'
+      - 'echo "✅ Installation complete. Run {{.BINARY_NAME}} (TUI) or {{.GUI_BINARY}} (GUI) from anywhere"'
+      - cmd: 'echo "   Windows builds: filecmp-win (GUI) or filecmp-win --tui (TUI)"'
+        if: '[ -n "{{.WSL}}" ]'
+
+  install-tui:
+    desc: Build and install only the TUI
+    deps: [build]
+    cmds:
+      - install -Dm755 {{.BINARY_NAME}}{{.EXE}} {{.BINDIR}}/{{.BINARY_NAME}}{{.EXE}}
+
+  install-gui:
+    desc: Build and install only the GUI (plus a launcher entry on Linux)
+    deps: [build-gui]
+    cmds:
+      - install -Dm755 {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
+      - cmd: install -Dm644 {{.GUI_DIR}}/build/appicon.svg {{.GUI_ICON}}
+        platforms: [linux]
+      - cmd: >-
+          sed -e "s|@BIN@|{{.BINDIR}}/{{.GUI_BINARY}}|" -e "s|@ICON@|{{.GUI_ICON}}|"
+          {{.GUI_DIR}}/build/linux/{{.GUI_BINARY}}.desktop > {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}.desktop
+        platforms: [linux]
+      - cmd: install -Dm644 {{.GUI_DIR}}/build/bin/{{.GUI_BINARY}}.desktop {{.DATADIR}}/applications/{{.GUI_BINARY}}.desktop
+        platforms: [linux]
+      - cmd: if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q {{.DATADIR}}/applications; fi
+        platforms: [linux]
+
+  install-windows:
+    desc: (WSL) Install the Windows TUI + GUI and the filecmp-win wrapper
+    deps: [build-windows, build-gui-windows]
+    vars:
+      WIN_INSTALL_DIR:
+        sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/filecmp"
+    preconditions:
+      - sh: case "{{.WIN_INSTALL_DIR}}" in /mnt/*) ;; *) exit 1;; esac
+        msg: "Could not locate %LOCALAPPDATA% (set WIN_INSTALL_DIR=/mnt/c/...)"
+    cmds:
+      - install -Dm755 {{.WIN_TUI}} "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe"
+      - install -Dm755 {{.WIN_GUI}} "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"
+      - mkdir -p {{.BINDIR}}
+      - sed 's|@WIN_DIR@|{{.WIN_INSTALL_DIR}}|' scripts/filecmp-win > {{.BINDIR}}/filecmp-win
+      - chmod 755 {{.BINDIR}}/filecmp-win
+
+  uninstall:
+    desc: Remove installed binaries from BINDIR (and the Windows builds under WSL)
+    vars:
+      WIN_INSTALL_DIR:
+        sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/filecmp"
+    cmds:
+      - rm -f {{.BINDIR}}/{{.BINARY_NAME}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
+      - rm -f {{.DATADIR}}/applications/{{.GUI_BINARY}}.desktop {{.GUI_ICON}}
+      - echo "🗑️  Removed {{.BINARY_NAME}} and {{.GUI_BINARY}} from {{.BINDIR}}"
+      - cmd: rm -f {{.BINDIR}}/filecmp-win "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe" "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"
+        if: '[ -n "{{.WSL}}" ]'
