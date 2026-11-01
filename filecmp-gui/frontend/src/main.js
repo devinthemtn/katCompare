@@ -39,6 +39,7 @@ const state = {
     copyTarget: 'to-right', // 'to-right' | 'to-left'
     copySelection: new Set(),
     lastLoad: null, // { git: bool, left, right } — to reload after external changes
+    shown: null, // { git, left, right } of the comparison currently displayed
     toolInfo: null, // ToolInfo from the backend
 };
 
@@ -128,6 +129,39 @@ modeTabs.forEach((btn) => {
         gitForm.classList.toggle('hidden', state.mode !== 'git');
         if (state.mode === 'git') refreshGitRefs();
     });
+});
+
+// ---------------------------------------------------------------------------
+// Compare button: highlight it while the inputs differ from what's displayed
+// ---------------------------------------------------------------------------
+
+// pendingInputs returns the inputs the current mode would compare, or null
+// when there's nothing to compare yet (empty paths).
+function pendingInputs() {
+    if (state.mode === 'git') {
+        return { git: true, left: leftRefInput.value.trim() || 'HEAD', right: rightRefInput.value.trim() };
+    }
+    const left = leftPathInput.value.trim();
+    const right = rightPathInput.value.trim();
+    if (!left && !right) return null;
+    return { git: false, left, right };
+}
+
+function updateComparePending() {
+    const want = pendingInputs();
+    const shown = state.shown;
+    const pending = !!want && !(shown && shown.git === want.git && shown.left === want.left && shown.right === want.right);
+    const btn = el(state.mode === 'git' ? 'git-compare-btn' : 'compare-btn');
+    const other = el(state.mode === 'git' ? 'compare-btn' : 'git-compare-btn');
+    other.classList.remove('btn-pending');
+    btn.classList.toggle('btn-pending', pending);
+    btn.title = pending ? 'Not shown yet — press Compare to load these inputs' : '';
+}
+
+// Values change from typing, dropdowns, swap buttons, suggestions… so
+// re-check after any of those (deferred so handlers have run first).
+['input', 'change', 'click', 'keyup'].forEach((type) => {
+    document.addEventListener(type, () => setTimeout(updateComparePending, 0), true);
 });
 
 // ---------------------------------------------------------------------------
@@ -294,18 +328,22 @@ setupAutocomplete(rightPathInput, el('right-suggestions'));
 el('left-browse-file').addEventListener('click', async () => {
     const path = await SelectFile(leftPathInput.value);
     if (path) leftPathInput.value = path;
+    updateComparePending();
 });
 el('left-browse-dir').addEventListener('click', async () => {
     const path = await SelectDirectory(leftPathInput.value);
     if (path) leftPathInput.value = path;
+    updateComparePending();
 });
 el('right-browse-file').addEventListener('click', async () => {
     const path = await SelectFile(rightPathInput.value);
     if (path) rightPathInput.value = path;
+    updateComparePending();
 });
 el('right-browse-dir').addEventListener('click', async () => {
     const path = await SelectDirectory(rightPathInput.value);
     if (path) rightPathInput.value = path;
+    updateComparePending();
 });
 
 el('swap-paths').addEventListener('click', () => {
@@ -322,11 +360,13 @@ async function runComparison(promise) {
     setStatus('Comparing…');
     try {
         const result = await promise;
+        state.shown = { ...state.lastLoad };
         applyComparisonResult(result);
         setStatus(`Loaded ${result.files.length} file(s).`);
     } catch (err) {
         setStatus(goErrorMessage(err), 'error');
     }
+    updateComparePending();
 }
 
 function loadPaths(left, right) {
@@ -1271,5 +1311,6 @@ GetInitialPaths()
         if (left) leftPathInput.value = left;
         if (right) rightPathInput.value = right;
         if (left && right) loadPaths(left, right);
+        else updateComparePending();
     })
     .catch((err) => setStatus(goErrorMessage(err), 'error'));

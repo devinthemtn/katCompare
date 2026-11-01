@@ -293,6 +293,20 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border-color: #6a45e0;
 }
 
+/* Compare button while the inputs aren't the comparison being shown */
+.btn-pending {
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--yellow);
+    animation: pending-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pending-pulse {
+    50% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 6px rgba(245, 217, 10, 0.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn-pending { animation: none; }
+}
+
 .btn-ghost {
     background: transparent;
     color: var(--text-dim);
