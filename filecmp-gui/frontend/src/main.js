@@ -521,6 +521,10 @@ function renderContentHeader() {
                 <button class="segmented-btn${state.diffView === 'sidebyside' ? ' active' : ''}" data-view="sidebyside">Side-by-side</button>
                 <button class="segmented-btn${state.diffView === 'merge' ? ' active' : ''}" data-view="merge" ${diff.canMerge ? '' : 'disabled title="Only available for files that exist on both sides"'}>Merge</button>
             </div>
+            <div class="segmented" id="change-nav">
+                <button class="segmented-btn" id="prev-change-btn" title="Previous change ([)">↑ Prev change</button>
+                <button class="segmented-btn" id="next-change-btn" title="Next change (])">↓ Next change</button>
+            </div>
         </div>
     `;
 
@@ -536,6 +540,8 @@ function renderContentHeader() {
     contentHeaderEl.querySelectorAll('[data-open-side]').forEach((btn) => {
         btn.addEventListener('click', () => openInEditor(btn.dataset.openSide, 0));
     });
+    el('prev-change-btn').addEventListener('click', () => jumpToChange(-1));
+    el('next-change-btn').addEventListener('click', () => jumpToChange(1));
     el('external-diff-btn')?.addEventListener('click', openInDiffTool);
     el('dir-diff-btn')?.addEventListener('click', openDirsInDiffTool);
     el('resolve-conflict-btn')?.addEventListener('click', resolveConflict);
@@ -664,12 +670,58 @@ function markerFor(type) {
     return '';
 }
 
+// ---------------------------------------------------------------------------
+// Change navigation (next / previous block of changed lines)
+// ---------------------------------------------------------------------------
+
+// hunkStart returns the class marking rows[i] as the first row of a block of
+// changes (rows are diff lines or side-by-side rows; both have a type).
+function hunkStart(rows, i) {
+    const changed = (r) => r && r.type !== 'equal';
+    return changed(rows[i]) && !changed(rows[i - 1]) ? ' hunk-start' : '';
+}
+
+// jumpToChange scrolls the next (dir > 0) or previous (dir < 0) block of
+// changes to a quarter of the way down the diff and highlights it. It steps
+// from the highlighted block while that is on screen, otherwise from the
+// scroll position, so it also works after scrolling by hand.
+function jumpToChange(dir) {
+    if (!state.diff) return;
+    const starts = [...contentBodyEl.querySelectorAll('.hunk-start')];
+    if (starts.length === 0) {
+        setStatus('No changes in this file.');
+        return;
+    }
+    const bodyRect = contentBodyEl.getBoundingClientRect();
+    const posOf = (row) => row.getBoundingClientRect().top - bodyRect.top + contentBodyEl.scrollTop;
+    const anchor = Math.round(contentBodyEl.clientHeight / 4);
+
+    let idx;
+    const current = contentBodyEl.querySelector('.hunk-start.hunk-current');
+    const currentRect = current?.getBoundingClientRect();
+    if (currentRect && currentRect.bottom > bodyRect.top && currentRect.top < bodyRect.bottom) {
+        idx = starts.indexOf(current) + dir;
+    } else {
+        const y = contentBodyEl.scrollTop + anchor;
+        idx = dir > 0 ? starts.findIndex((r) => posOf(r) > y + 1) : starts.findLastIndex((r) => posOf(r) < y - 1);
+    }
+    if (idx < 0 || idx >= starts.length) {
+        setStatus(dir > 0 ? 'No more changes below.' : 'No more changes above.');
+        return;
+    }
+    const target = starts[idx];
+    current?.classList.remove('hunk-current');
+    target.classList.add('hunk-current');
+    contentBodyEl.scrollTop = posOf(target) - anchor;
+    setStatus(`Change ${idx + 1} of ${starts.length}`);
+}
+
 function renderUnified(diff) {
     contentBodyEl.innerHTML = diff.lines
-        .map((line) => {
+        .map((line, i) => {
             const leftNum = line.leftLineNum > 0 ? line.leftLineNum : '';
             const rightNum = line.rightLineNum > 0 ? line.rightLineNum : '';
-            return `<div class="diff-line ${line.type}">
+            return `<div class="diff-line ${line.type}${hunkStart(diff.lines, i)}">
                 <span class="ln"${lnAttrs('left', line.leftLineNum)}>${leftNum}</span>
                 <span class="ln ln-right"${lnAttrs('right', line.rightLineNum)}>${rightNum}</span>
                 <span class="marker">${markerFor(line.type)}</span>
@@ -693,7 +745,7 @@ function sbsCell(content, lineNum, cls, side) {
 
 function renderSideBySide(diff) {
     contentBodyEl.innerHTML = `<div class="sbs-table">${diff.sideBySide
-        .map((row) => {
+        .map((row, i) => {
             let leftCls = '';
             let rightCls = '';
             switch (row.type) {
@@ -713,7 +765,7 @@ function renderSideBySide(diff) {
                     leftCls = '';
                     rightCls = '';
             }
-            return `<div class="sbs-row">
+            return `<div class="sbs-row${hunkStart(diff.sideBySide, i)}">
                 ${sbsCell(row.leftContent, row.leftLineNum, leftCls, 'left')}
                 ${sbsCell(row.rightContent, row.rightLineNum, rightCls, 'right')}
             </div>`;
@@ -758,7 +810,7 @@ function renderMerge(diff) {
             const set = line.type === 'insert' ? state.mergeSelection.insertions : state.mergeSelection.deletions;
             const selected = set.has(i);
             const lineNum = line.type === 'insert' ? line.rightLineNum : line.leftLineNum;
-            return `<div class="merge-line ${line.type} ${selected ? 'selected' : 'unselected'}">
+            return `<div class="merge-line ${line.type} ${selected ? 'selected' : 'unselected'}${hunkStart(diff.lines, i)}">
                 <span class="checkbox-cell"><input type="checkbox" data-index="${i}" ${selected ? 'checked' : ''}/></span>
                 <span class="ln">${lineNum > 0 ? lineNum : ''}</span>
                 <span class="marker">${markerFor(line.type)}</span>
@@ -984,6 +1036,8 @@ document.addEventListener('keydown', (e) => {
     if (!state.diff) return;
     if (e.key === 'e') openInEditor(defaultEditSide(state.diff), 0);
     else if (e.key === 'd') openInDiffTool();
+    else if (e.key === ']') jumpToChange(1);
+    else if (e.key === '[') jumpToChange(-1);
 });
 
 // ---------------------------------------------------------------------------

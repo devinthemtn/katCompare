@@ -241,6 +241,7 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 - **s**: Switch view mode (Unified ↔ Side-by-Side)
 - **g**: Go to top of diff
 - **G**: Go to bottom of diff
+- **]** / **[**: Jump to the next / previous change
 - **n**: Next file
 - **p**: Previous file
 - **m**: Enter merge mode (only available for files that exist on both sides)
@@ -427,6 +428,7 @@ examples/       # Sample files for testing
 | `j/k` | ❌ | ✅ | ✅ | ✅ | ✅ | Vim-style navigation |
 | `h/l` or `←/→` | ❌ | ❌ | ✅ | ❌ | ❌ | Scroll left/right |
 | `g/G` | ❌ | ✅ | ✅ | ❌ | ❌ | Jump to top/bottom |
+| `]/[` | ❌ | ✅ | ✅ | ❌ | ❌ | Jump to next/previous change |
 | `/` | ✅ | ❌ | ❌ | ❌ | ❌ | Filter file list |
 | `s` | ❌ | ✅ | ✅ | ✅ | ✅ | Switch view mode / Save result / Copy files |
 | `n/p` | ❌ | ✅ | ✅ | ❌ | ❌ | Next/previous file |

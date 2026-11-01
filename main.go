@@ -121,6 +121,7 @@ Interactive Controls:
   j/k              Navigate diff (vim-style)
   n/p              Next/previous file
   g/G              Go to top/bottom
+  ]/[              Jump to next/previous change
   m                Enter merge mode
   Esc              Go back
   ?                Show help

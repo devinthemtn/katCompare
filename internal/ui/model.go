@@ -624,6 +624,14 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "]":
+		m.jumpToChange(1)
+		return m, nil
+
+	case "[":
+		m.jumpToChange(-1)
+		return m, nil
+
 	case "n":
 		m.selectNextFile()
 		m.loadDiff()
@@ -1390,6 +1398,48 @@ func max(a, b int) int {
 }
 
 // maxDiffLines returns the total navigable lines for the current view mode.
+// diffViewHeight is the number of diff rows visible at once (matches the
+// diff renderers in views.go).
+func (m *Model) diffViewHeight() int {
+	return max(5, m.windowHeight-10)
+}
+
+// isChangeRow reports whether row i of the current diff view is a change.
+func (m *Model) isChangeRow(i int) bool {
+	if m.diffViewMode == DiffViewSideBySide {
+		return m.sbsRows[i].Type != differ.SBSEqual
+	}
+	return m.currentDiff.Lines[i].Type != differ.DiffEqual
+}
+
+// jumpToChange moves the cursor to the start of the next (dir > 0) or
+// previous (dir < 0) block of changed lines, scrolling it into view a little
+// below the top so some context shows above it.
+func (m *Model) jumpToChange(dir int) {
+	n := m.maxDiffLines()
+	isStart := func(i int) bool {
+		return m.isChangeRow(i) && (i == 0 || !m.isChangeRow(i-1))
+	}
+	target := -1
+	for i := m.cursor + dir; i >= 0 && i < n; i += dir {
+		if isStart(i) {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		if dir > 0 {
+			m.errorMsg = "No more changes below"
+		} else {
+			m.errorMsg = "No more changes above"
+		}
+		return
+	}
+	m.cursor = target
+	height := m.diffViewHeight()
+	m.scrollOffset = max(0, min(target-height/4, n-height))
+}
+
 func (m *Model) maxDiffLines() int {
 	if m.diffViewMode == DiffViewSideBySide {
 		return len(m.sbsRows)
