@@ -22,7 +22,7 @@ Unicode true
 ## !define INFO_PROJECTNAME    "my-project" # Default "katcmp-gui"
 ## !define INFO_COMPANYNAME    "My Company" # Default "Thomas Koefod"
 ## !define INFO_PRODUCTNAME    "My Product Name" # Default "katCompare"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "1.2.0"
+## !define INFO_PRODUCTVERSION "1.0.0"     # Default "1.3.0"
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "Copyright © 2026 Thomas Koefod"
 ###
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
