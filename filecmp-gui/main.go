@@ -9,6 +9,8 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"golang-fileCmp/internal/git"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -32,6 +34,8 @@ func main() {
 			return
 		}
 	}
+
+	git.TrustWSLPaths()
 
 	app := application.New(application.Options{
 		Name:        "filecmp-gui",
