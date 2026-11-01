@@ -16,6 +16,8 @@ import {
     OpenInDiffTool,
     OpenDirsInDiffTool,
     ResolveConflict,
+    GetConflicts,
+    SaveConflicts,
 } from '../bindings/golang-fileCmp/filecmp-gui/app.js';
 import { Events } from '@wailsio/runtime';
 
@@ -29,8 +31,10 @@ const state = {
     filterQuery: '',
     selectedRelPath: null,
     diff: null, // DiffResult for the selected file
-    diffView: 'unified', // 'unified' | 'sidebyside' | 'merge'
+    diffView: 'unified', // 'unified' | 'sidebyside' | 'merge' | 'conflicts'
     mergeTarget: 'left', // 'left' | 'right'
+    conflicts: [], // ConflictBlockDTOs of the selected file (when conflicted)
+    conflictChoices: [], // per block: '' | 'ours' | 'theirs' | 'both' | 'both-theirs-first'
     mergeSelection: { insertions: new Set(), deletions: new Set() },
     copyTarget: 'to-right', // 'to-right' | 'to-left'
     copySelection: new Set(),
@@ -337,11 +341,13 @@ function loadGit(leftRef, rightRef) {
 
 // reloadComparison re-runs the last comparison, e.g. after a file was edited
 // or a conflict resolved in an external tool.
-function reloadComparison() {
+// statusAfter, if given, replaces the "Loaded N file(s)" status once done.
+async function reloadComparison(statusAfter) {
     const last = state.lastLoad;
     if (!last) return;
-    if (last.git) loadGit(last.left, last.right);
-    else loadPaths(last.left, last.right);
+    if (last.git) await loadGit(last.left, last.right);
+    else await loadPaths(last.left, last.right);
+    if (statusAfter && !statusbarEl.classList.contains('error')) setStatus(statusAfter, 'success');
 }
 
 el('compare-btn').addEventListener('click', () => {
@@ -471,9 +477,19 @@ async function selectFile(relPath) {
 
     try {
         const diff = await GetDiff(relPath);
+        const sameFile = state.diff?.relPath === relPath;
         state.diff = diff;
-        state.mergeTarget = 'left';
+        state.mergeTarget = diff.leftEditable || !diff.rightEditable ? 'left' : 'right';
         resetMergeSelection();
+        state.conflicts = [];
+        state.conflictChoices = [];
+        if (diff.conflicted) {
+            state.conflicts = (await GetConflicts(relPath)) || [];
+            state.conflictChoices = state.conflicts.map(() => '');
+            if (!sameFile) state.diffView = 'conflicts';
+        } else if (state.diffView === 'conflicts') {
+            state.diffView = 'unified';
+        }
         if (state.diffView === 'merge' && !diff.canMerge) {
             state.diffView = 'unified';
         }
@@ -517,6 +533,7 @@ function renderContentHeader() {
         <div class="content-actions">
             ${externalActionsHtml(diff)}
             <div class="segmented" id="view-toggle">
+                ${diff.conflicted ? `<button class="segmented-btn${state.diffView === 'conflicts' ? ' active' : ''}" data-view="conflicts">Conflicts</button>` : ''}
                 <button class="segmented-btn${state.diffView === 'unified' ? ' active' : ''}" data-view="unified">Unified</button>
                 <button class="segmented-btn${state.diffView === 'sidebyside' ? ' active' : ''}" data-view="sidebyside">Side-by-side</button>
                 <button class="segmented-btn${state.diffView === 'merge' ? ' active' : ''}" data-view="merge" ${diff.canMerge ? '' : 'disabled title="Only available for files that exist on both sides"'}>Merge</button>
@@ -572,7 +589,7 @@ function externalActionsHtml(diff) {
         buttons.push(`<button class="btn btn-ghost btn-small" id="dir-diff-btn" title="Open both folders in your diff tool">Folders in diff tool</button>`);
     }
     if (diff.conflicted) {
-        buttons.push(`<button class="btn btn-primary btn-small" id="resolve-conflict-btn" title="Resolve with git mergetool">Resolve conflict</button>`);
+        buttons.push(`<button class="btn btn-ghost btn-small" id="resolve-conflict-btn" title="Resolve in your external merge tool (git mergetool)">Merge tool</button>`);
     }
     return `<div class="external-actions">${buttons.join('')}</div>`;
 }
@@ -629,9 +646,11 @@ async function resolveConflict() {
 
 Events.On('conflict-resolved', (ev) => {
     const [relPath, errMsg] = ev.data;
-    if (errMsg) setStatus(`Merge tool exited: ${errMsg}`, 'error');
-    else setStatus(`Merge tool finished for ${relPath}.`, 'success');
-    reloadComparison();
+    if (errMsg) {
+        reloadComparison().then(() => setStatus(`Merge tool exited: ${errMsg}`, 'error'));
+    } else {
+        reloadComparison(`Merge tool finished for ${relPath}.`);
+    }
 });
 
 // Clicking a line number opens that side in the editor at that line.
@@ -662,6 +681,7 @@ function renderContentBody() {
     if (state.diffView === 'unified') renderUnified(diff);
     else if (state.diffView === 'sidebyside') renderSideBySide(diff);
     else if (state.diffView === 'merge') renderMerge(diff);
+    else if (state.diffView === 'conflicts') renderConflicts(diff);
 }
 
 function markerFor(type) {
@@ -774,8 +794,178 @@ function renderSideBySide(diff) {
 }
 
 // ---------------------------------------------------------------------------
+// Conflicts view (resolve git conflict markers in place)
+// ---------------------------------------------------------------------------
+
+const CHOICE_LABELS = {
+    ours: 'Ours',
+    theirs: 'Theirs',
+    both: 'Both (ours first)',
+    'both-theirs-first': 'Both (theirs first)',
+};
+
+function choiceLines(block, choice) {
+    switch (choice) {
+        case 'ours':
+            return block.ours || [];
+        case 'theirs':
+            return block.theirs || [];
+        case 'both':
+            return [...(block.ours || []), ...(block.theirs || [])];
+        case 'both-theirs-first':
+            return [...(block.theirs || []), ...(block.ours || [])];
+    }
+    return [];
+}
+
+function codeLines(lines, cls) {
+    if (!lines || lines.length === 0) return `<div class="conflict-code empty ${cls}">(no lines)</div>`;
+    return `<div class="conflict-code ${cls}">${lines.map((l) => `<div>${escapeHtml(l) || '&nbsp;'}</div>`).join('')}</div>`;
+}
+
+function renderConflicts(diff) {
+    const blocks = state.conflicts;
+    const choices = state.conflictChoices;
+    const resolved = choices.filter((c) => c).length;
+    const total = blocks.length;
+
+    if (total === 0) {
+        contentBodyEl.innerHTML = `
+            <div class="conflict-done">
+                <p>No conflict markers left in <strong>${escapeHtml(diff.displayName)}</strong>, but git still lists it as conflicted.</p>
+                <button class="btn btn-primary btn-small" id="conflict-mark">Mark resolved (git add)</button>
+            </div>`;
+        el('conflict-mark').addEventListener('click', () => saveConflicts(true));
+        return;
+    }
+
+    const cards = blocks
+        .map((b, i) => {
+            const choice = choices[i];
+            const head = `<div class="conflict-card-head">
+                <span class="conflict-title">Conflict ${i + 1} of ${total}</span>
+                <span class="conflict-line">line ${b.startLine}</span>
+                ${choice ? `<span class="badge badge-resolved">${CHOICE_LABELS[choice]}</span>` : '<span class="badge badge-conflict">unresolved</span>'}
+                <span class="spacer"></span>
+                ${Object.entries(CHOICE_LABELS)
+                    .map(
+                        ([key, label]) =>
+                            `<button class="btn btn-small ${choice === key ? 'btn-primary' : 'btn-ghost'}" data-block="${i}" data-choice="${key}">${label}</button>`
+                    )
+                    .join('')}
+                ${choice ? `<button class="btn btn-ghost btn-small" data-block="${i}" data-choice="">Undo</button>` : ''}
+            </div>`;
+            const body = choice
+                ? `<div class="conflict-side result">
+                        <div class="conflict-side-label">Result</div>
+                        ${codeLines(choiceLines(b, choice), 'result')}
+                   </div>`
+                : `<div class="conflict-sides">
+                        <div class="conflict-side">
+                            <div class="conflict-side-label ours">Ours <span>${escapeHtml(b.oursLabel)}</span></div>
+                            ${codeLines(b.ours, 'ours')}
+                        </div>
+                        <div class="conflict-side">
+                            <div class="conflict-side-label theirs">Theirs <span>${escapeHtml(b.theirsLabel)}</span></div>
+                            ${codeLines(b.theirs, 'theirs')}
+                        </div>
+                   </div>
+                   ${b.base ? `<details class="conflict-base"><summary>Common ancestor ${escapeHtml(b.baseLabel)}</summary>${codeLines(b.base, 'base')}</details>` : ''}`;
+            return `<div class="conflict-card hunk-start${choice ? ' resolved' : ''}" data-index="${i}">
+                ${head}
+                ${b.before?.length ? codeLines(b.before, 'context') : ''}
+                ${body}
+                ${b.after?.length ? codeLines(b.after, 'context') : ''}
+            </div>`;
+        })
+        .join('');
+
+    contentBodyEl.innerHTML = `
+        <div class="merge-toolbar">
+            <div class="stats"><span>${resolved} of ${total} resolved</span></div>
+            <button class="btn btn-ghost btn-small" id="conflict-all-ours">All ours</button>
+            <button class="btn btn-ghost btn-small" id="conflict-all-theirs">All theirs</button>
+            <button class="btn btn-ghost btn-small" id="conflict-reset" ${resolved ? '' : 'disabled'}>Reset</button>
+            <div class="spacer"></div>
+            <button class="btn btn-ghost btn-small" id="conflict-save" ${resolved ? '' : 'disabled'} title="Write the chosen resolutions; unresolved conflicts keep their markers">Save</button>
+            <button class="btn btn-primary btn-small" id="conflict-save-mark" ${resolved === total ? '' : 'disabled title="Resolve every conflict first"'}>Save &amp; mark resolved</button>
+        </div>
+        <div class="conflict-list">${cards}</div>`;
+
+    contentBodyEl.querySelectorAll('[data-choice]').forEach((btn) => {
+        btn.addEventListener('click', () => setConflictChoice(Number(btn.dataset.block), btn.dataset.choice));
+    });
+    el('conflict-all-ours').addEventListener('click', () => setAllConflicts('ours'));
+    el('conflict-all-theirs').addEventListener('click', () => setAllConflicts('theirs'));
+    el('conflict-reset').addEventListener('click', () => setAllConflicts(''));
+    el('conflict-save').addEventListener('click', () => saveConflicts(false));
+    el('conflict-save-mark').addEventListener('click', () => saveConflicts(true));
+}
+
+// Re-render keeping the scroll position (cards change height when resolved).
+function rerenderConflicts() {
+    const top = contentBodyEl.scrollTop;
+    renderContentBody();
+    contentBodyEl.scrollTop = top;
+}
+
+function setConflictChoice(i, choice) {
+    state.conflictChoices[i] = choice;
+    rerenderConflicts();
+    const card = contentBodyEl.querySelector(`.conflict-card[data-index="${i}"]`);
+    card?.classList.add('hunk-current');
+}
+
+function setAllConflicts(choice) {
+    state.conflictChoices = state.conflicts.map(() => choice);
+    rerenderConflicts();
+}
+
+// conflictKey applies a choice to the highlighted conflict (from ]/[), or to
+// the first unresolved one.
+function conflictKey(choice) {
+    const current = contentBodyEl.querySelector('.conflict-card.hunk-current');
+    let i = current ? Number(current.dataset.index) : state.conflictChoices.findIndex((c) => !c);
+    if (i < 0) return;
+    setConflictChoice(i, choice);
+    if (!choice) return;
+    // Move on to the next unresolved conflict.
+    const next = state.conflictChoices.findIndex((c, j) => j > i && !c);
+    if (next < 0) return;
+    contentBodyEl.querySelector('.conflict-card.hunk-current')?.classList.remove('hunk-current');
+    const card = contentBodyEl.querySelector(`.conflict-card[data-index="${next}"]`);
+    card.classList.add('hunk-current');
+    card.scrollIntoView({ block: 'start' });
+}
+
+async function saveConflicts(markResolved) {
+    const diff = state.diff;
+    if (!diff) return;
+    try {
+        const msg = await SaveConflicts(diff.relPath, state.conflictChoices, markResolved);
+        await reloadComparison(msg);
+    } catch (err) {
+        setStatus(goErrorMessage(err), 'error');
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Merge mode
 // ---------------------------------------------------------------------------
+
+// toggleMergeBlock selects every change in the block starting at row start,
+// or deselects them all when they already were.
+function toggleMergeBlock(diff, start) {
+    let end = start;
+    while (end + 1 < diff.lines.length && diff.lines[end + 1].type !== 'equal') end++;
+    const setFor = (i) => (diff.lines[i].type === 'insert' ? state.mergeSelection.insertions : state.mergeSelection.deletions);
+    let allOn = true;
+    for (let i = start; i <= end; i++) if (!setFor(i).has(i)) allOn = false;
+    for (let i = start; i <= end; i++) {
+        if (allOn) setFor(i).delete(i);
+        else setFor(i).add(i);
+    }
+}
 
 function mergeStats() {
     const diff = state.diff;
@@ -795,7 +985,11 @@ function mergeStats() {
 
 function renderMerge(diff) {
     const stats = mergeStats();
-    const targetPath = state.mergeTarget === 'left' ? `${diff.leftLabel}.merged` : `${diff.rightLabel}.merged`;
+    const editable = { left: diff.leftEditable, right: diff.rightEditable };
+    const targetLabel = state.mergeTarget === 'left' ? diff.leftLabel : diff.rightLabel;
+    const targetName = targetLabel.split(/[\\/]/).pop();
+    const canSave = editable[state.mergeTarget];
+    const notFile = 'This side is a git revision, not a file on disk';
 
     const lineRows = diff.lines
         .map((line, i) => {
@@ -810,8 +1004,12 @@ function renderMerge(diff) {
             const set = line.type === 'insert' ? state.mergeSelection.insertions : state.mergeSelection.deletions;
             const selected = set.has(i);
             const lineNum = line.type === 'insert' ? line.rightLineNum : line.leftLineNum;
-            return `<div class="merge-line ${line.type} ${selected ? 'selected' : 'unselected'}${hunkStart(diff.lines, i)}">
-                <span class="checkbox-cell"><input type="checkbox" data-index="${i}" ${selected ? 'checked' : ''}/></span>
+            const start = hunkStart(diff.lines, i);
+            const blockBtn = start
+                ? `<button class="block-toggle" data-block="${i}" title="Toggle this whole block of changes">▾</button>`
+                : '';
+            return `<div class="merge-line ${line.type} ${selected ? 'selected' : 'unselected'}${start}">
+                <span class="checkbox-cell">${blockBtn}<input type="checkbox" data-index="${i}" ${selected ? 'checked' : ''}/></span>
                 <span class="ln">${lineNum > 0 ? lineNum : ''}</span>
                 <span class="marker">${markerFor(line.type)}</span>
                 <span class="content">${escapeHtml(line.content)}</span>
@@ -822,8 +1020,8 @@ function renderMerge(diff) {
     contentBodyEl.innerHTML = `
         <div class="merge-toolbar">
             <div class="segmented" id="merge-target-toggle">
-                <button class="segmented-btn${state.mergeTarget === 'left' ? ' active' : ''}" data-target="left">Apply to left</button>
-                <button class="segmented-btn${state.mergeTarget === 'right' ? ' active' : ''}" data-target="right">Apply to right</button>
+                <button class="segmented-btn${state.mergeTarget === 'left' ? ' active' : ''}" data-target="left" ${editable.left ? 'title="Apply the checked changes to the left file"' : `disabled title="${notFile}"`}>Apply to left</button>
+                <button class="segmented-btn${state.mergeTarget === 'right' ? ' active' : ''}" data-target="right" ${editable.right ? 'title="Apply the checked changes to the right file"' : `disabled title="${notFile}"`}>Apply to right</button>
             </div>
             <div class="stats">
                 <span class="stat-insert">Insertions: ${stats.selIns}/${stats.totalIns} selected</span>
@@ -832,13 +1030,14 @@ function renderMerge(diff) {
             <div class="spacer"></div>
             <button class="btn btn-ghost btn-small" id="merge-select-all">Select all</button>
             <button class="btn btn-ghost btn-small" id="merge-select-none">Select none</button>
-            <button class="btn btn-primary btn-small" id="merge-save">Save to ${escapeHtml(targetPath)}</button>
+            <button class="btn btn-primary btn-small" id="merge-save" ${canSave ? `title="Overwrite ${escapeHtml(targetLabel)} (the old version is kept as ${escapeHtml(targetName)}.orig)"` : `disabled title="${notFile}"`}>Save to ${escapeHtml(targetName)}</button>
         </div>
         <div id="merge-lines">${lineRows}</div>
     `;
 
     document.querySelectorAll('#merge-target-toggle .segmented-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
+            if (btn.disabled) return;
             state.mergeTarget = btn.dataset.target;
             renderContentBody();
         });
@@ -864,7 +1063,15 @@ function renderMerge(diff) {
         });
     });
 
+    document.querySelectorAll('#merge-lines .block-toggle').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            toggleMergeBlock(diff, Number(btn.dataset.block));
+            renderContentBody();
+        });
+    });
+
     el('merge-save').addEventListener('click', async () => {
+        if (!canSave) return;
         try {
             const msg = await SaveMerge({
                 relPath: diff.relPath,
@@ -872,7 +1079,7 @@ function renderMerge(diff) {
                 selectedInsertions: [...state.mergeSelection.insertions],
                 selectedDeletions: [...state.mergeSelection.deletions],
             });
-            setStatus(msg, 'success');
+            await reloadComparison(msg);
         } catch (err) {
             setStatus(goErrorMessage(err), 'error');
         }
@@ -1038,6 +1245,10 @@ document.addEventListener('keydown', (e) => {
     else if (e.key === 'd') openInDiffTool();
     else if (e.key === ']') jumpToChange(1);
     else if (e.key === '[') jumpToChange(-1);
+    else if (state.diffView === 'conflicts') {
+        const keyChoices = { o: 'ours', t: 'theirs', b: 'both', B: 'both-theirs-first', u: '' };
+        if (e.key in keyChoices) conflictKey(keyChoices[e.key]);
+    }
 });
 
 // ---------------------------------------------------------------------------

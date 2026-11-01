@@ -122,7 +122,8 @@ Interactive Controls:
   n/p              Next/previous file
   g/G              Go to top/bottom
   ]/[              Jump to next/previous change
-  m                Enter merge mode
+  m                Enter merge mode (on a git conflict: resolve conflicts)
+  R                Resolve a git conflict in your merge tool
   Esc              Go back
   ?                Show help
   Q/Ctrl+C         Quit

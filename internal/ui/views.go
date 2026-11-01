@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -436,7 +437,7 @@ func (m *Model) renderDiffView() string {
 
 	header := fmt.Sprintf("%s vs %s%s", leftFile, rightFile, viewModeIndicator)
 	if m.conflicts[m.selectedFile] {
-		header += " [CONFLICT — R: resolve]"
+		header += " [CONFLICT — m: resolve here, R: merge tool]"
 	}
 	b.WriteString(headerStyle.Width(m.windowWidth).Render(header))
 	b.WriteString("\n\n")
@@ -453,6 +454,9 @@ func (m *Model) renderDiffView() string {
 	b.WriteString("\n\n")
 	if m.errorMsg != "" {
 		b.WriteString(errorStyle.Render(m.errorMsg))
+		b.WriteString("\n\n")
+	} else if m.statusMsg != "" {
+		b.WriteString(statusStyle.Render(m.statusMsg))
 		b.WriteString("\n\n")
 	}
 
@@ -678,11 +682,27 @@ Config Files:
 
 Merge Mode:
   ↑/↓ or j/k       Navigate through diff lines
-  Space/Enter      Toggle selection of current change
-  t                Switch merge target (left/right)
+  ] / [            Jump to next / previous change
+  Space            Toggle the change on the current line
+  Enter            Toggle the whole block of changes
+  t                Switch merge target (left/right; only real files)
   a                Select all changes
   n                Select no changes
-  s                Save merged result to file
+  s                Save over the target file (old version kept as .orig)
+  Esc              Return to diff view
+  ?                Show this help screen
+  Q/Ctrl+C         Quit application
+
+Conflict Mode (m on a git conflict):
+  ↑/↓ j/k ] [      Move between conflicts
+  o / t            Take ours / theirs
+  b / B            Take both (ours first / theirs first)
+  u                Undo the choice
+  O / T            Take ours / theirs for every conflict
+  s                Save the chosen resolutions (others keep markers)
+  A                Save and mark resolved (git add)
+  e                Edit the file at this conflict
+  R                Resolve in your external merge tool
   Esc              Return to diff view
   ?                Show this help screen
   Q/Ctrl+C         Quit application
@@ -836,7 +856,8 @@ func (m *Model) renderMergeView() string {
 	var b strings.Builder
 
 	// Header
-	header := fmt.Sprintf("Merge Mode - Target: %s", strings.ToUpper(m.mergeTarget))
+	header := fmt.Sprintf("Merge Mode - Target: %s (%s; old version kept as .orig)",
+		strings.ToUpper(m.mergeTarget), filepath.Base(m.editablePath(m.mergeTarget)))
 	b.WriteString(mergeHeaderStyle.Width(m.windowWidth).Render(header))
 	b.WriteString("\n\n")
 
@@ -847,6 +868,10 @@ func (m *Model) renderMergeView() string {
 		b.WriteString(helpStyle.Width(m.windowWidth).Render(stats))
 		b.WriteString("\n\n")
 	}
+	if m.errorMsg != "" {
+		b.WriteString(errorStyle.Render(m.errorMsg))
+		b.WriteString("\n\n")
+	}
 
 	// Diff content with selection indicators
 	b.WriteString(m.renderMergeContent())
@@ -855,11 +880,11 @@ func (m *Model) renderMergeView() string {
 	b.WriteString("\n")
 	var helpText string
 	if m.windowWidth > 80 {
-		helpText = "Space/Enter: Toggle • t: Switch target • a: Select all • n: Select none • s: Save • Esc: Back • ?: Help"
+		helpText = "Space: Toggle line • Enter: Toggle block • ]/[: Next/Prev change • t: Switch target • a: All • n: None • s: Save • Esc: Back • ?: Help"
 	} else if m.windowWidth > 60 {
-		helpText = "Space: Toggle • t: Target • a: All • n: None • s: Save • Esc: Back"
+		helpText = "Space: Line • Enter: Block • ]/[: Changes • t: Target • a/n: All/None • s: Save • Esc: Back"
 	} else {
-		helpText = "Space:Toggle t:Target a:All n:None s:Save Esc:Back"
+		helpText = "Spc:Line Ent:Block t:Target a/n:All/None s:Save Esc:Back"
 	}
 	b.WriteString(helpStyle.Width(m.windowWidth).Render(helpText))
 
@@ -1135,10 +1160,7 @@ func (m *Model) renderMergeContent() string {
 	}
 
 	var b strings.Builder
-	maxVisible := m.windowHeight - 12 // Account for header, stats, and help text
-	if maxVisible < 5 {
-		maxVisible = 5
-	}
+	maxVisible := m.mergeViewHeight()
 
 	start := m.scrollOffset
 	end := start + maxVisible

@@ -1,7 +1,9 @@
 package merge
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
 
 	"golang-fileCmp/internal/differ"
@@ -251,4 +253,69 @@ func (m *Merger) CreateMergePreview(diff *differ.FileDiff, selection *ChangeSele
 	}
 
 	return preview.String()
+}
+
+// ToggleBlock toggles the whole block of adjacent changed lines containing
+// lineIndex: every change in it becomes selected, or all are deselected when
+// they already were. It does nothing on an unchanged line.
+func (cs *ChangeSelection) ToggleBlock(diff *differ.FileDiff, lineIndex int) {
+	lines := diff.Lines
+	if lineIndex < 0 || lineIndex >= len(lines) || lines[lineIndex].Type == differ.DiffEqual {
+		return
+	}
+	start, end := lineIndex, lineIndex
+	for start > 0 && lines[start-1].Type != differ.DiffEqual {
+		start--
+	}
+	for end+1 < len(lines) && lines[end+1].Type != differ.DiffEqual {
+		end++
+	}
+	allOn := true
+	for i := start; i <= end; i++ {
+		if !cs.IsInsertionSelected(i) && !cs.IsDeletionSelected(i) {
+			allOn = false
+			break
+		}
+	}
+	for i := start; i <= end; i++ {
+		switch lines[i].Type {
+		case differ.DiffInsert:
+			cs.ApplyInsertions[i] = !allOn
+		case differ.DiffDelete:
+			cs.ApplyDeletions[i] = !allOn
+		}
+	}
+}
+
+// SaveWithBackup overwrites path with content, first copying the current
+// file to path+".orig". The file keeps its permissions, and its trailing
+// newline (the merge result has none) when it had one. It returns the
+// backup path.
+func SaveWithBackup(path, content string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory", path)
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	backup := path + ".orig"
+	if err := os.WriteFile(backup, old, info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("failed to write backup: %w", err)
+	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		if bytes.HasSuffix(old, []byte("\r\n")) {
+			content += "\r\n"
+		} else if bytes.HasSuffix(old, []byte("\n")) {
+			content += "\n"
+		}
+	}
+	if err := os.WriteFile(path, []byte(content), info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("failed to save %s: %w", path, err)
+	}
+	return backup, nil
 }

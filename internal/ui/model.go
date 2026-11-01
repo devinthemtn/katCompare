@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang-fileCmp/internal/conflict"
 	"golang-fileCmp/internal/differ"
 	"golang-fileCmp/internal/external"
 	"golang-fileCmp/internal/file"
@@ -29,6 +30,7 @@ const (
 	ViewModeCopy
 	ViewModeHelp
 	ViewModeGitSelect
+	ViewModeConflict
 )
 
 // DiffViewMode represents the diff display mode
@@ -79,6 +81,11 @@ type Model struct {
 	mergeTarget     string // "left" or "right"
 	mergePreview    string
 
+	// Conflict view: resolving git conflict markers in the selected file
+	conflictFile    *conflict.File
+	conflictChoices []conflict.Choice
+	conflictIdx     int
+
 	// Copy view
 	copySelection map[string]bool // Maps relative path to whether to copy
 	copyTarget    string          // "to-left" or "to-right"
@@ -95,6 +102,7 @@ type Model struct {
 	showingHelp bool
 	helpScroll  int
 	errorMsg    string
+	statusMsg   string // success message, shown until the next key press
 
 	// Path suggestions
 	leftSuggestions  []string
@@ -280,6 +288,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case externalDoneMsg:
 		m.handleExternalDone(msg)
 		return m, nil
+
+	case saveDoneMsg:
+		if msg.err != nil {
+			m.errorMsg = msg.err.Error()
+			return m, nil
+		}
+		// The target file changed: show the refreshed diff.
+		m.viewMode = ViewModeDiff
+		m.reloadComparison()
+		m.statusMsg = msg.text
+		return m, nil
 	}
 
 	return m, nil
@@ -306,6 +325,8 @@ func (m *Model) View() string {
 		return m.renderHelpView()
 	case ViewModeGitSelect:
 		return m.renderGitSelectView()
+	case ViewModeConflict:
+		return m.renderConflictView()
 	default:
 		return "Unknown view mode"
 	}
@@ -326,6 +347,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKeys(msg)
 	case ViewModeGitSelect:
 		return m.handleGitSelectKeys(msg)
+	case ViewModeConflict:
+		return m.handleConflictKeys(msg)
 	}
 	return m, nil
 }
@@ -569,7 +592,7 @@ func (m *Model) handleFileSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleDiffKeys handles keys in diff view mode
 func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.errorMsg = "" // errors are shown until the next key press
+	m.errorMsg, m.statusMsg = "", "" // messages are shown until the next key press
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -659,6 +682,11 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "m":
+		// A git conflict opens the conflict resolver instead of the line merge
+		if m.gitMode && m.conflicts[m.selectedFile] {
+			m.openConflictView()
+			return m, nil
+		}
 		// Enter merge mode if we have a diff loaded
 		if m.currentDiff != nil {
 			// Check if this is a valid file for merging
@@ -843,6 +871,9 @@ func (m *Model) handleExternalDone(msg externalDoneMsg) {
 	}
 	if msg.kind != "diff" {
 		m.reloadComparison()
+		if m.viewMode == ViewModeConflict {
+			m.afterExternalInConflictView()
+		}
 	}
 	switch {
 	case errText != "" && msg.kind == "merge":
@@ -884,6 +915,7 @@ func (m *Model) reloadComparison() {
 
 // handleMergeKeys handles keys in merge view mode
 func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.errorMsg, m.statusMsg = "", ""
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -904,14 +936,30 @@ func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if m.currentDiff != nil && m.cursor < len(m.currentDiff.Lines)-1 {
 			m.cursor++
-			maxVisible := m.windowHeight - 15 // Account for header and footer
+			maxVisible := m.mergeViewHeight()
 			if m.cursor >= m.scrollOffset+maxVisible {
 				m.scrollOffset = m.cursor - maxVisible + 1
 			}
 		}
 		return m, nil
 
-	case " ", "enter":
+	case "enter":
+		// Toggle the whole block of changes under the cursor
+		if m.currentDiff != nil {
+			m.changeSelection.ToggleBlock(m.currentDiff, m.cursor)
+			m.updateMergePreview()
+		}
+		return m, nil
+
+	case "]":
+		m.jumpToChange(1)
+		return m, nil
+
+	case "[":
+		m.jumpToChange(-1)
+		return m, nil
+
+	case " ":
 		// Toggle selection of current change
 		if m.currentDiff != nil && m.cursor < len(m.currentDiff.Lines) {
 			line := m.currentDiff.Lines[m.cursor]
@@ -938,12 +986,16 @@ func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "t":
-		// Toggle merge target (left/right)
+		// Toggle merge target (left/right); only real files can be saved to
+		other := "left"
 		if m.mergeTarget == "left" {
-			m.mergeTarget = "right"
-		} else {
-			m.mergeTarget = "left"
+			other = "right"
 		}
+		if m.editablePath(other) == "" {
+			m.errorMsg = fmt.Sprintf("The %s side is a git revision, not a file — only the %s file can be changed", other, m.mergeTarget)
+			return m, nil
+		}
+		m.mergeTarget = other
 		m.updateMergePreview()
 		return m, nil
 
@@ -1401,12 +1453,26 @@ func max(a, b int) int {
 // diffViewHeight is the number of diff rows visible at once (matches the
 // diff renderers in views.go).
 func (m *Model) diffViewHeight() int {
+	if m.viewMode == ViewModeMerge {
+		return m.mergeViewHeight()
+	}
 	return max(5, m.windowHeight-10)
+}
+
+// mergeViewHeight is the number of rows the merge view shows at once.
+func (m *Model) mergeViewHeight() int {
+	return max(5, m.windowHeight-12)
+}
+
+// usesSideBySideRows reports whether the cursor indexes sbsRows (the
+// side-by-side diff) rather than the unified lines (also used by merge).
+func (m *Model) usesSideBySideRows() bool {
+	return m.diffViewMode == DiffViewSideBySide && m.viewMode != ViewModeMerge
 }
 
 // isChangeRow reports whether row i of the current diff view is a change.
 func (m *Model) isChangeRow(i int) bool {
-	if m.diffViewMode == DiffViewSideBySide {
+	if m.usesSideBySideRows() {
 		return m.sbsRows[i].Type != differ.SBSEqual
 	}
 	return m.currentDiff.Lines[i].Type != differ.DiffEqual
@@ -1441,7 +1507,7 @@ func (m *Model) jumpToChange(dir int) {
 }
 
 func (m *Model) maxDiffLines() int {
-	if m.diffViewMode == DiffViewSideBySide {
+	if m.usesSideBySideRows() {
 		return len(m.sbsRows)
 	}
 	if m.currentDiff == nil {
@@ -1606,6 +1672,13 @@ func (m *Model) initializeMergeMode() {
 	if m.selectedFile != "" {
 		if fileComparison, exists := m.allFiles[m.selectedFile]; exists && fileComparison.Source == file.SourceBoth {
 			m.changeSelection = merge.NewChangeSelection(m.currentDiff)
+			if m.editablePath(m.mergeTarget) == "" {
+				if m.mergeTarget == "left" {
+					m.mergeTarget = "right"
+				} else {
+					m.mergeTarget = "left"
+				}
+			}
 			m.updateMergePreview()
 			m.cursor = 0
 			m.scrollOffset = 0
@@ -1623,31 +1696,36 @@ func (m *Model) updateMergePreview() {
 	m.mergePreview = m.merger.CreateMergePreview(m.currentDiff, m.changeSelection, m.mergeTarget)
 }
 
-// saveMergedFile saves the merged result to a file
+// saveDoneMsg reports the result of saving a merge.
+type saveDoneMsg struct {
+	text string
+	err  error
+}
+
+// saveMergedFile applies the selected changes to the target side and saves
+// the result over that file, keeping the old version as "<file>.orig".
 func (m *Model) saveMergedFile() tea.Cmd {
+	if m.currentDiff == nil || m.changeSelection == nil {
+		return nil
+	}
+	targetPath := m.editablePath(m.mergeTarget)
+	if targetPath == "" {
+		m.errorMsg = fmt.Sprintf("The %s side is a git revision, not a file on disk", m.mergeTarget)
+		return nil
+	}
+	var result *merge.MergeResult
+	if m.mergeTarget == "left" {
+		result = m.merger.ApplyToLeft(m.currentDiff, m.changeSelection)
+	} else {
+		result = m.merger.ApplyToRight(m.currentDiff, m.changeSelection)
+	}
 	return func() tea.Msg {
-		if m.currentDiff == nil || m.changeSelection == nil {
-			return nil
-		}
-
-		var result *merge.MergeResult
-		var targetPath string
-
-		if m.mergeTarget == "left" {
-			result = m.merger.ApplyToLeft(m.currentDiff, m.changeSelection)
-			targetPath = m.currentDiff.LeftFile + ".merged"
-		} else {
-			result = m.merger.ApplyToRight(m.currentDiff, m.changeSelection)
-			targetPath = m.currentDiff.RightFile + ".merged"
-		}
-
-		err := os.WriteFile(targetPath, []byte(result.Content), 0644)
+		backup, err := merge.SaveWithBackup(targetPath, result.Content)
 		if err != nil {
-			return fmt.Sprintf("Error saving merged file: %s", err.Error())
+			return saveDoneMsg{err: fmt.Errorf("error saving merged file: %w", err)}
 		}
-
-		return fmt.Sprintf("Saved merged result to %s (%d changes applied, %d skipped)",
-			targetPath, result.Applied, result.Skipped)
+		return saveDoneMsg{text: fmt.Sprintf("Saved %s (%d change(s) applied, %d skipped); previous version in %s",
+			targetPath, result.Applied, result.Skipped, filepath.Base(backup))}
 	}
 }
 

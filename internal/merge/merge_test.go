@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -239,5 +240,64 @@ func TestMergeSymmetry(t *testing.T) {
 	if leftResult.Content != rightResult.Content {
 		t.Errorf("symmetry fail:\nApplyToLeft(all)=%q\nApplyToRight(none)=%q",
 			leftResult.Content, rightResult.Content)
+	}
+}
+
+// ---- ToggleBlock / SaveWithBackup -------------------------------------------
+
+func TestToggleBlock(t *testing.T) {
+	// One block (delete b, insert X, Y) between equal lines.
+	diff := makeDiff("a\nb\nc\n", "a\nX\nY\nc\n")
+	sel := NewChangeSelection(diff)
+	var changed []int
+	for i, l := range diff.Lines {
+		if l.Type != differ.DiffEqual {
+			changed = append(changed, i)
+		}
+	}
+	isOn := func(i int) bool { return sel.IsInsertionSelected(i) || sel.IsDeletionSelected(i) }
+
+	sel.ToggleBlock(diff, changed[1]) // all on -> all off
+	for _, i := range changed {
+		if isOn(i) {
+			t.Fatalf("line %d still selected after toggling a fully selected block", i)
+		}
+	}
+	sel.ToggleInsertion(changed[len(changed)-1])
+	sel.ToggleBlock(diff, changed[0]) // partly on -> all on
+	for _, i := range changed {
+		if !isOn(i) {
+			t.Fatalf("line %d not selected after toggling a partly selected block", i)
+		}
+	}
+	sel.ToggleBlock(diff, 0) // equal line: no-op
+	if !isOn(changed[0]) {
+		t.Fatal("toggling an equal line changed the selection")
+	}
+}
+
+func TestSaveWithBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/f.txt"
+	if err := os.WriteFile(path, []byte("old\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := SaveWithBackup(path, "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "new\n" {
+		t.Errorf("saved %q, want %q (trailing newline kept)", got, "new\n")
+	}
+	orig, _ := os.ReadFile(backup)
+	if backup != path+".orig" || string(orig) != "old\n" {
+		t.Errorf("backup %s = %q", backup, orig)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0640 {
+		t.Errorf("mode = %v, want 0640", info.Mode().Perm())
+	}
+	if _, err := SaveWithBackup(dir+"/missing", "x"); err == nil {
+		t.Error("expected error for a missing file")
 	}
 }
