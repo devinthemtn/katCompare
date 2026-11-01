@@ -479,11 +479,16 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .content-actions {
     display: flex;
+    flex: 1 1 auto;
     gap: 8px;
     align-items: center;
-    flex-shrink: 0;
     flex-wrap: wrap;
     justify-content: flex-end;
+}
+
+/* Prev/Next change sit at the far right of the actions row */
+#change-nav {
+    margin-left: auto;
 }
 
 .external-actions {
@@ -555,6 +560,11 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     min-height: 0;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 12.5px;
+}
+
+/* The change block last jumped to with Next/Prev change */
+.hunk-current > :first-child {
+    box-shadow: inset 3px 0 0 var(--accent);
 }
 
 /* Unified diff */

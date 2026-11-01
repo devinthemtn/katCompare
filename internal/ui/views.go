@@ -468,19 +468,19 @@ func (m *Model) renderDiffView() string {
 	var helpText string
 	if m.diffViewMode == DiffViewSideBySide {
 		if m.windowWidth > 80 {
-			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • g/G: Top/Bottom • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
+			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • g/G: Top/Bottom • ]/[: Next/Prev change • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
 		} else if m.windowWidth > 60 {
-			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
+			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • ]/[: Changes • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
 		} else {
-			helpText = "↑↓:Nav h/l:L/R s:View n/p:Files m:Merge Esc:Back ?:Help Q:Quit"
+			helpText = "↑↓:Nav h/l:L/R ]/[:Chg s:View n/p:Files m:Merge Esc:Back ?:Help Q:Quit"
 		}
 	} else {
 		if m.windowWidth > 80 {
-			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
+			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • ]/[: Next/Prev change • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
 		} else if m.windowWidth > 60 {
-			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
+			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • ]/[: Changes • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
 		} else {
-			helpText = "↑↓:Nav g/G:Top/Bot s:View n/p:Files m:Merge Esc:Back ?:Help Q:Quit"
+			helpText = "↑↓:Nav ]/[:Chg s:View n/p:Files m:Merge Esc:Back ?:Help Q:Quit"
 		}
 	}
 	b.WriteString(helpStyle.Width(m.windowWidth).Render(helpText))
@@ -630,6 +630,7 @@ Diff View Mode:
   ↑/↓ or j/k       Navigate through diff lines
   g                Go to top of diff
   G                Go to bottom of diff
+  ] / [            Jump to next / previous change
   s                Switch view mode (Unified ↔ Side-by-Side)
   n                Next common file
   p                Previous common file
@@ -648,6 +649,7 @@ Side-by-Side View Mode:
   h/l or ←/→       Visual focus left/right (for reference)
   g                Go to top of diff
   G                Go to bottom of diff
+  ] / [            Jump to next / previous change
   s                Switch to Unified view mode
   n                Next common file
   p                Previous common file
