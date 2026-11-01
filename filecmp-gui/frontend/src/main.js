@@ -288,19 +288,19 @@ setupAutocomplete(rightPathInput, el('right-suggestions'));
 // ---------------------------------------------------------------------------
 
 el('left-browse-file').addEventListener('click', async () => {
-    const path = await SelectFile();
+    const path = await SelectFile(leftPathInput.value);
     if (path) leftPathInput.value = path;
 });
 el('left-browse-dir').addEventListener('click', async () => {
-    const path = await SelectDirectory();
+    const path = await SelectDirectory(leftPathInput.value);
     if (path) leftPathInput.value = path;
 });
 el('right-browse-file').addEventListener('click', async () => {
-    const path = await SelectFile();
+    const path = await SelectFile(rightPathInput.value);
     if (path) rightPathInput.value = path;
 });
 el('right-browse-dir').addEventListener('click', async () => {
-    const path = await SelectDirectory();
+    const path = await SelectDirectory(rightPathInput.value);
     if (path) rightPathInput.value = path;
 });
 
