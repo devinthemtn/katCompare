@@ -18,7 +18,7 @@ import {
     ResolveConflict,
     GetConflicts,
     SaveConflicts,
-} from '../bindings/golang-fileCmp/filecmp-gui/app.js';
+} from '../bindings/katcompare/katcmp-gui/app.js';
 import { Events } from '@wailsio/runtime';
 
 // ---------------------------------------------------------------------------

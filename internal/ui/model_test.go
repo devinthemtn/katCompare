@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"golang-fileCmp/internal/differ"
+	"katcompare/internal/differ"
 )
 
 func TestJumpToChange(t *testing.T) {

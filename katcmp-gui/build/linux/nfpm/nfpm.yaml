@@ -3,7 +3,7 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "filecmp-gui"
+name: "katcmp-gui"
 arch: ${GOARCH}
 platform: "linux"
 version: "1.2.0"
@@ -17,12 +17,12 @@ license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/filecmp-gui"
-    dst: "/usr/local/bin/filecmp-gui"
+  - src: "./bin/katcmp-gui"
+    dst: "/usr/local/bin/katcmp-gui"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/filecmp-gui.png"
-  - src: "./build/linux/filecmp-gui.desktop"
-    dst: "/usr/share/applications/filecmp-gui.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/katcmp-gui.png"
+  - src: "./build/linux/katcmp-gui.desktop"
+    dst: "/usr/share/applications/katcmp-gui.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

@@ -1,14 +1,14 @@
-# File Compare
+# katCompare
 
 **Compare files, directories, and git refs — then merge just the changes you want. Also I wrote it to be easier for red/green colour blind people to use because I'm tired of all diff tools using at least by default red/green.**
 
-File Compare is a fast, color-coded diff and merge tool written in Go that is clean looking and simple to use. It ships two ways from one engine: a **native desktop app** (Wails) and a **keyboard-driven terminal UI** (Bubble Tea).
+katCompare is a fast, color-coded diff and merge tool written in Go that is clean looking and simple to use. It ships two ways from one engine: a **native desktop app** (Wails) and a **keyboard-driven terminal UI** (Bubble Tea).
 
-![File Compare desktop GUI comparing a config file between HEAD and origin/main in unified view](assets/snip-gui-file-cmp.png)
+![katCompare desktop GUI comparing a config file between HEAD and origin/main in unified view](assets/snip-gui-file-cmp.png)
 
 <sub>The desktop GUI in Git mode, diffing `HEAD` against `origin/main` — changed files on the left, a color-coded unified diff on the right, with Side-by-side and Merge views one click away.</sub>
 
-## Why File Compare?
+## Why katCompare?
 
 - 🎨 **Diffs you can read at a glance** — blue for additions, red for deletions, with old/new line numbers and live `equal / +added / -deleted` counts
 - 🌱 **Git-aware** — diff any ref against another ref, or against your working tree, without leaving the app
@@ -26,8 +26,8 @@ File Compare is a fast, color-coded diff and merge tool written in Go that is cl
 
 ### Download
 
-- **Windows:** [**Download the installer**](https://github.com/devinthemtn/fileCmp-golang-wails/releases/latest/download/filecmp-gui-windows-amd64-installer.exe) and double-click it. It installs File Compare for your user only, so you don't need admin rights, and adds Start menu and desktop shortcuts. The installer is unsigned, so Windows SmartScreen will ask you to click *More info → Run anyway*.
-- **Other platforms:** the Linux GUI, the portable Windows GUI, and the terminal UI for Linux, macOS and Windows are on the [Releases page](https://github.com/devinthemtn/fileCmp-golang-wails/releases/latest).
+- **Windows:** [**Download the installer**](https://github.com/devinthemtn/katCompare/releases/latest/download/katcmp-gui-windows-amd64-installer.exe) and double-click it. It installs katCompare for your user only, so you don't need admin rights, and adds Start menu and desktop shortcuts. The installer is unsigned, so Windows SmartScreen will ask you to click *More info → Run anyway*.
+- **Other platforms:** the Linux GUI, the portable Windows GUI, and the terminal UI for Linux, macOS and Windows are on the [Releases page](https://github.com/devinthemtn/katCompare/releases/latest).
 
 ### Build and install both in one step
 
@@ -38,13 +38,15 @@ task install                          # builds TUI + GUI, installs to $(go env G
 task install BINDIR=~/.local/bin      # or pick another directory on your PATH
 ```
 
-This installs `filecmp` (TUI) and `filecmp-gui` (GUI). Use `task install-tui` / `task install-gui` for just one, and `task uninstall` to remove them.
+This installs `katcmp` (TUI) and `katcmp-gui` (GUI). Use `task install-tui` / `task install-gui` for just one, and `task uninstall` to remove them.
 
-**Under WSL**, `task install` also cross-compiles the Windows builds, installs `filecmp.exe` and `filecmp-gui.exe` to `%LOCALAPPDATA%\Programs\filecmp`, and adds a `filecmp-win` wrapper to `BINDIR`:
+> **Upgrading from File Compare?** The project was renamed to katCompare, and the commands changed from `filecmp` / `filecmp-gui` / `filecmp-win` to `katcmp` / `katcmp-gui` / `katcmp-win`. `task install` removes the old commands, launcher entry and Windows folder (`task uninstall-legacy` does just that). `FILECMP_EDITOR` still works, but `KATCMP_EDITOR` is the new name. If you used the old Windows installer, uninstall "File Compare" from Windows Settings → Apps.
+
+**Under WSL**, `task install` also cross-compiles the Windows builds, installs `katcmp.exe` and `katcmp-gui.exe` to `%LOCALAPPDATA%\Programs\katCompare`, and adds a `katcmp-win` wrapper to `BINDIR`:
 
 ```bash
-filecmp-win ./a ./b          # Windows GUI in a native window
-filecmp-win --tui ./a ./b    # Windows TUI in this terminal
+katcmp-win ./a ./b          # Windows GUI in a native window
+katcmp-win --tui ./a ./b    # Windows TUI in this terminal
 ```
 
 The wrapper converts path arguments to Windows paths. Use `task install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `task build-windows` / `task build-gui-windows` just build them (output goes to `build/`).
@@ -56,8 +58,8 @@ Requires Go 1.25+, Node.js, [go-task](https://taskfile.dev) and the [Wails v3 CL
 ```bash
 go install github.com/wailsapp/wails/v3/cmd/wails3@latest
 task build-gui         # Linux: needs GTK/WebKit -dev packages (see below)
-./filecmp-gui/bin/filecmp-gui
-./filecmp-gui/bin/filecmp-gui old.yaml new.yaml   # pre-fill both paths and compare right away
+./katcmp-gui/bin/katcmp-gui
+./katcmp-gui/bin/katcmp-gui old.yaml new.yaml   # pre-fill both paths and compare right away
 ```
 
 Pick the **Files / Directories** tab to compare two paths (type them, use the native file/folder picker, or pass them on the command line), or the **Git** tab to compare refs — leave the right ref blank to compare against the working tree.
@@ -65,18 +67,18 @@ Pick the **Files / Directories** tab to compare two paths (type them, use the na
 ### Terminal UI
 
 ```bash
-go build -o filecmp
-./filecmp                         # interactive path entry
-./filecmp old.yaml new.yaml       # two files
-./filecmp ./project-v1 ./project-v2   # two directories
-./filecmp --git HEAD~1            # a git ref vs the working tree
+go build -o katcmp
+./katcmp                         # interactive path entry
+./katcmp old.yaml new.yaml       # two files
+./katcmp ./project-v1 ./project-v2   # two directories
+./katcmp --git HEAD~1            # a git ref vs the working tree
 ```
 
 ---
 
 ## Desktop GUI (Wails)
 
-The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It imports the same diff/merge/file/git/external packages from the repository's `internal/` directory as the TUI, behind a mouse-driven interface built with [Wails](https://wails.io) — a Go backend with a vanilla HTML/CSS/JS frontend, no framework. Both share a single Go module; the TUI binary never imports Wails, so it doesn't pull in any GUI dependencies.
+The desktop app lives in [`katcmp-gui/`](katcmp-gui/). It imports the same diff/merge/file/git/external packages from the repository's `internal/` directory as the TUI, behind a mouse-driven interface built with [Wails](https://wails.io) — a Go backend with a vanilla HTML/CSS/JS frontend, no framework. Both share a single Go module; the TUI binary never imports Wails, so it doesn't pull in any GUI dependencies.
 
 ### GUI Features
 
@@ -111,30 +113,30 @@ Then, from the repo root:
 
 ```bash
 task dev-gui     # live development with hot reload
-task build-gui   # production binary in filecmp-gui/bin/
+task build-gui   # production binary in katcmp-gui/bin/
 task install-gui # build and install to $(go env GOPATH)/bin (+ Linux launcher entry)
 ```
 
-The GUI's own Wails v3 Taskfiles live in `filecmp-gui/` (`Taskfile.yml` and `build/*/Taskfile.yml`), so `wails3 build` / `wails3 dev` also work from inside that directory.
+The GUI's own Wails v3 Taskfiles live in `katcmp-gui/` (`Taskfile.yml` and `build/*/Taskfile.yml`), so `wails3 build` / `wails3 dev` also work from inside that directory.
 
 #### Linux: GTK version
 
-Wails v3 defaults to GTK4 + WebKitGTK 6.0 on Linux. This project builds with the `gtk3` tag instead (set as the default `EXTRA_TAGS` in `filecmp-gui/build/linux/Taskfile.yml`), so it links against GTK3 + WebKitGTK 4.1 — the packages above, available on most current distros (e.g. Ubuntu 24.04). To build against GTK4 instead, install `libgtk-4-dev libwebkitgtk-6.0-dev` and remove that `gtk3` default.
+Wails v3 defaults to GTK4 + WebKitGTK 6.0 on Linux. This project builds with the `gtk3` tag instead (set as the default `EXTRA_TAGS` in `katcmp-gui/build/linux/Taskfile.yml`), so it links against GTK3 + WebKitGTK 4.1 — the packages above, available on most current distros (e.g. Ubuntu 24.04). To build against GTK4 instead, install `libgtk-4-dev libwebkitgtk-6.0-dev` and remove that `gtk3` default.
 
-Because of the tag, plain `go build ./...` / `go vet ./...` at the repo root fail on Linux in the `filecmp-gui` package; use `go build -tags gtk3 ./...` / `go test -tags gtk3 ./...` (the tasks, including `task test`, handle this for you).
+Because of the tag, plain `go build ./...` / `go vet ./...` at the repo root fail on Linux in the `katcmp-gui` package; use `go build -tags gtk3 ./...` / `go test -tags gtk3 ./...` (the tasks, including `task test`, handle this for you).
 
 #### Building for Windows
 
-**On Windows**, with Go, go-task and the Wails v3 CLI installed, just run `task build-gui` (or `wails3 build` in `filecmp-gui/`) — no extra setup needed. It uses WebView2 (present by default on current Windows 10/11).
+**On Windows**, with Go, go-task and the Wails v3 CLI installed, just run `task build-gui` (or `wails3 build` in `katcmp-gui/`) — no extra setup needed. It uses WebView2 (present by default on current Windows 10/11).
 
 **Cross-compiling from Linux/WSL** needs no extra compiler, since the Windows build doesn't use cgo. From the repository root:
 
 ```bash
-task build-gui-windows     # → build/filecmp-gui-windows-amd64.exe
-task build-win-installer   # → build/filecmp-gui-windows-amd64-installer.exe (needs: sudo apt install nsis)
+task build-gui-windows     # → build/katcmp-gui-windows-amd64.exe
+task build-win-installer   # → build/katcmp-gui-windows-amd64-installer.exe (needs: sudo apt install nsis)
 ```
 
-The installer installs File Compare for the current user into `%LOCALAPPDATA%\Programs\File Compare`, with no admin prompt. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. It's unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. Its product name and version come from the `info` section of `filecmp-gui/build/config.yml`. Bump `version` there when you release, then run `task update-gui-assets` to regenerate the derived files (`build/windows/info.json`, the NSIS defines, macOS `Info.plist`). That regeneration overwrites `build/windows/nsis/project.nsi`, so re-add the `MUI_FINISHPAGE_RUN` line (the "Run File Compare" checkbox) afterwards. The installer also installs WebView2 if it's missing.
+The installer installs katCompare for the current user into `%LOCALAPPDATA%\Programs\katCompare`, with no admin prompt. It adds Start menu and desktop shortcuts and an uninstall entry in *Apps & features*. It's unsigned, so Windows SmartScreen asks users to click *More info → Run anyway*. Its product name and version come from the `info` section of `katcmp-gui/build/config.yml`. Bump `version` there when you release, then run `task update-gui-assets` to regenerate the derived files (`build/windows/info.json`, the NSIS defines, macOS `Info.plist`). That regeneration overwrites `build/windows/nsis/project.nsi`, so re-add the `MUI_FINISHPAGE_RUN` line (the "Run katCompare" checkbox) afterwards. The installer also installs WebView2 if it's missing.
 
 #### Building for macOS
 
@@ -143,7 +145,7 @@ Wails does not support cross-compiling to macOS from Linux or Windows (it needs 
 ### GUI project structure
 
 ```
-filecmp-gui/
+katcmp-gui/
 ├── app.go               # Wails service: LoadComparison, LoadGitComparison,
 │                        # GetDiff, SaveMerge, CopyFiles, SuggestPaths, dialogs
 ├── main.go              # application.New(...) entrypoint
@@ -173,36 +175,36 @@ The TUI is a full-screen, keyboard-driven interface built with [Bubble Tea](http
 
 ```bash
 git clone <repository-url>
-cd fileCmp-golang-wails
-go build -o filecmp     # or: task deps && task build
+cd katCompare
+go build -o katcmp     # or: task deps && task build
 ```
 
 ### Command Line Options
 
 ```bash
 # Start with interactive file selection
-./filecmp
+./katcmp
 
 # Compare two files directly
-./filecmp file1.txt file2.txt
+./katcmp file1.txt file2.txt
 
 # Compare two directories (finds common files automatically)
-./filecmp ./project-v1 ./project-v2
+./katcmp ./project-v1 ./project-v2
 
 # Load left file, enter right path in TUI
-./filecmp /path/to/file1.txt
+./katcmp /path/to/file1.txt
 
 # Compare HEAD against the working tree (must be run inside a git repo)
-./filecmp --git
+./katcmp --git
 
 # Compare a ref against the working tree (includes staged changes)
-./filecmp --git HEAD~1
+./katcmp --git HEAD~1
 
 # Compare two refs against each other
-./filecmp --git HEAD~3 HEAD
+./katcmp --git HEAD~3 HEAD
 
 # Show comprehensive help
-./filecmp --help
+./katcmp --help
 ```
 
 ### Quick Start with Task
@@ -299,12 +301,12 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 Both the GUI and the TUI can hand the current file off to other apps.
 
 **Editor.** The first one found is used:
-1. `$FILECMP_EDITOR`
+1. `$KATCMP_EDITOR`
 2. `$VISUAL`
 3. `$EDITOR`
 4. the OS default app (`xdg-open` / `open` / `start`)
 
-The value can include arguments, for example `FILECMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI prefers terminal editors: if `$VISUAL` is a GUI editor (e.g. `emacsclient -c`) and `$EDITOR` runs in a terminal (e.g. `emacsclient -t`), the TUI uses `$EDITOR`. `$FILECMP_EDITOR` always wins. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
+The value can include arguments, for example `KATCMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI prefers terminal editors: if `$VISUAL` is a GUI editor (e.g. `emacsclient -c`) and `$EDITOR` runs in a terminal (e.g. `emacsclient -t`), the TUI uses `$EDITOR`. `$KATCMP_EDITOR` always wins. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
 
 **Diff and merge tools** come from your git config, so set them once:
 
@@ -376,37 +378,37 @@ Files with any of the 60+ extensions or names below are always treated as text. 
 
 ### Comparing Two Files
 ```bash
-./filecmp config.old.yaml config.new.yaml
+./katcmp config.old.yaml config.new.yaml
 ```
 
 ### Comparing Project Directories
 ```bash
-./filecmp ./project-v1 ./project-v2
+./katcmp ./project-v1 ./project-v2
 ```
 This will find all files from both directories and allow you to compare them, merge changes, and copy unique files.
 
 ### Interactive Mode
 ```bash
-./filecmp
+./katcmp
 ```
 Then enter paths interactively using the TUI.
 
 ### Comparing Against Git
 ```bash
 # HEAD vs working tree (includes staged and unstaged changes)
-./filecmp --git
+./katcmp --git
 
 # A specific commit vs working tree
-./filecmp --git HEAD~1
+./katcmp --git HEAD~1
 
 # Two commits/refs against each other
-./filecmp --git main feature-branch
+./katcmp --git main feature-branch
 ```
 
 ### Copy Unique Files Between Directories
 ```bash
 # Compare directories, then from the diff view press 'c' to enter copy mode
-./filecmp old-project/ new-project/
+./katcmp old-project/ new-project/
 # Select files to copy and press 's' to copy them
 ```
 
@@ -429,7 +431,7 @@ internal/
 ├── git/        # Git ref / working-tree comparison support (--git mode)
 └── external/   # Launching editors and external diff/merge tools
 
-filecmp-gui/    # Wails desktop GUI (same Go module, imports internal/) — see "Desktop GUI (Wails)" above
+katcmp-gui/    # Wails desktop GUI (same Go module, imports internal/) — see "Desktop GUI (Wails)" above
 examples/       # Sample files for testing
 ```
 
@@ -487,8 +489,8 @@ Build tasks use [go-task](https://taskfile.dev) (`go install github.com/go-task/
 
 ```bash
 # Clone and build
-git clone https://github.com/devinthemtn/fileCmp-golang-wails.git
-cd fileCmp-golang-wails
+git clone https://github.com/devinthemtn/katCompare.git
+cd katCompare
 task deps
 task build
 

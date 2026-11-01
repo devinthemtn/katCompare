@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang-fileCmp/internal/conflict"
-	"golang-fileCmp/internal/external"
-	"golang-fileCmp/internal/git"
+	"katcompare/internal/conflict"
+	"katcompare/internal/external"
+	"katcompare/internal/git"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

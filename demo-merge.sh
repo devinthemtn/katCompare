@@ -41,7 +41,7 @@ echo "Press any key to continue..."
 read -n 1 -s
 
 # Run the file comparison tool
-./filecmp examples/file1.txt examples/file2.txt
+./katcmp examples/file1.txt examples/file2.txt
 
 echo ""
 echo "=== Demo Complete ==="

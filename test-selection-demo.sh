@@ -46,7 +46,7 @@ echo "   - fileD.txt (modified C)"
 echo ""
 
 echo "Testing file selection:"
-echo "1. Running: ../filecmp fileA.txt fileB.txt"
+echo "1. Running: ../katcmp fileA.txt fileB.txt"
 echo "2. Check that one file is highlighted with ►"
 echo "3. Use ↑/↓ to change selection"
 echo "4. Press Ctrl+D to compare selected file"
@@ -55,14 +55,14 @@ echo ""
 echo "Press Enter to start..."
 read
 
-../filecmp fileA.txt fileB.txt
+../katcmp fileA.txt fileB.txt
 
 echo ""
 echo "Now testing with different files:"
 echo "Press Enter to continue..."
 read
 
-../filecmp fileC.txt fileD.txt
+../katcmp fileC.txt fileD.txt
 
 echo ""
 echo "Demo complete!"

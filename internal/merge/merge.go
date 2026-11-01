@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"golang-fileCmp/internal/differ"
+	"katcompare/internal/differ"
 )
 
 // ChangeSelection represents which changes to apply

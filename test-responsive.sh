@@ -53,7 +53,7 @@ for width in "${widths[@]}"; do
     read
 
     # Run the tool
-    timeout 10s ../filecmp file1.txt file2.txt || true
+    timeout 10s ../katcmp file1.txt file2.txt || true
 
     echo ""
     echo "Press Enter to continue to next width..."

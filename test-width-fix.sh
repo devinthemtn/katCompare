@@ -62,13 +62,13 @@ echo ""
 echo "Test 1: Short filename"
 echo "Press Enter to test..."
 read
-../filecmp short.txt medium-length-filename.txt
+../katcmp short.txt medium-length-filename.txt
 
 echo ""
 echo "Test 2: Long filename comparison"
 echo "Press Enter to test..."
 read
-../filecmp very-long-configuration-filename-that-might-cause-width-issues.yaml very-long-configuration-filename-that-might-cause-width-issues-updated.yaml
+../katcmp very-long-configuration-filename-that-might-cause-width-issues.yaml very-long-configuration-filename-that-might-cause-width-issues-updated.yaml
 
 echo ""
 echo "=========================================="

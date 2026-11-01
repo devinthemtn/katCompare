@@ -6,8 +6,8 @@ version: '3'
 # This information is used to generate the build assets.
 info:
   companyName: "Thomas Koefod" # The name of the company
-  productName: "File Compare" # The name of the application
-  productIdentifier: "com.koefod.filecmp-gui" # The unique product identifier
+  productName: "katCompare" # The name of the application
+  productIdentifier: "com.koefod.katcompare" # The unique product identifier
   description: "Compare files and directories side by side" # The application description
   copyright: "Copyright © 2026 Thomas Koefod" # Copyright text
   comments: "Compare files and directories side by side" # Comments

@@ -1,19 +1,19 @@
-# Build tasks for filecmp (TUI) and filecmp-gui (Wails GUI).
+# Build tasks for katcmp (TUI) and katcmp-gui (Wails GUI).
 # Requires go-task: go install github.com/go-task/task/v3/cmd/task@latest
 # Run "task --list" to see all tasks. Variables can be overridden on the
 # command line, e.g.: task install BINDIR=~/.local/bin
 version: '3'
 
 vars:
-  BINARY_NAME: filecmp
+  BINARY_NAME: katcmp
   BUILD_DIR: build
   MAIN_FILE: main.go
-  GUI_DIR: filecmp-gui
-  GUI_BINARY: filecmp-gui
+  GUI_DIR: katcmp-gui
+  GUI_BINARY: katcmp-gui
   GUI_BIN_DIR: '{{.GUI_DIR}}/bin'
   WAILS_HINT: "wails3 CLI not found. Install it with: go install github.com/wailsapp/wails/v3/cmd/wails3@latest"
-  # GUI tasks run the Wails v3 Taskfile in filecmp-gui/ as a sub-process,
-  # since its tasks expect ROOT_DIR to be filecmp-gui/.
+  # GUI tasks run the Wails v3 Taskfile in katcmp-gui/ as a sub-process,
+  # since its tasks expect ROOT_DIR to be katcmp-gui/.
   GUI_TASK: '"{{.TASK_EXE}}" -d {{.GUI_DIR}}'
   # Version stamped into both binaries (override with: task VERSION=v1.2.3)
   VERSION:
@@ -33,8 +33,8 @@ vars:
   WIN_GUI: '{{.BUILD_DIR}}/{{.GUI_BINARY}}-windows-amd64.exe'
   WIN_INSTALLER: '{{.BUILD_DIR}}/{{.GUI_BINARY}}-windows-amd64-installer.exe'
   # Under WSL, "task install" also installs the Windows builds into
-  # WIN_INSTALL_DIR (default: %LOCALAPPDATA%\Programs\filecmp) and a
-  # "filecmp-win" wrapper into BINDIR. Disable with: task install WSL=
+  # WIN_INSTALL_DIR (default: %LOCALAPPDATA%\Programs\katCompare) and a
+  # "katcmp-win" wrapper into BINDIR. Disable with: task install WSL=
   WSL:
     sh: grep -qi microsoft /proc/version 2>/dev/null && echo 1 || true
 
@@ -87,9 +87,9 @@ tasks:
       - 'echo "✅ Build complete: ./{{.WIN_GUI}}"'
 
   # Per-user installer: no admin prompt; installs to
-  # %LOCALAPPDATA%\Programs\File Compare with Start menu + desktop shortcuts.
+  # %LOCALAPPDATA%\Programs\katCompare with Start menu + desktop shortcuts.
   # The installer's product name/version come from the "info" section of
-  # filecmp-gui/build/config.yml (after editing it, run
+  # katcmp-gui/build/config.yml (after editing it, run
   # "task update-gui-assets").
   build-win-installer:
     desc: Build a per-user Windows installer (needs NSIS)
@@ -105,10 +105,10 @@ tasks:
       - 'echo "✅ Installer complete: ./{{.WIN_INSTALLER}}"'
 
   # Regenerates Info.plist, info.json, the NSIS defines, etc. from
-  # filecmp-gui/build/config.yml. This overwrites manual edits to those files
+  # katcmp-gui/build/config.yml. This overwrites manual edits to those files
   # (re-check MUI_FINISHPAGE_RUN in build/windows/nsis/project.nsi afterwards).
   update-gui-assets:
-    desc: Regenerate GUI build assets from filecmp-gui/build/config.yml
+    desc: Regenerate GUI build assets from katcmp-gui/build/config.yml
     cmds:
       - '{{.GUI_TASK}} common:update:build-assets'
 
@@ -199,12 +199,13 @@ tasks:
   install:
     desc: Build and install TUI + GUI to BINDIR (under WSL also the Windows builds; skip with WSL=)
     cmds:
+      - task: uninstall-legacy
       - task: install-tui
       - task: install-gui
       - task: install-windows
         if: '[ -n "{{.WSL}}" ]'
       - 'echo "✅ Installation complete. Run {{.BINARY_NAME}} (TUI) or {{.GUI_BINARY}} (GUI) from anywhere"'
-      - cmd: 'echo "   Windows builds: filecmp-win (GUI) or filecmp-win --tui (TUI)"'
+      - cmd: 'echo "   Windows builds: katcmp-win (GUI) or katcmp-win --tui (TUI)"'
         if: '[ -n "{{.WSL}}" ]'
 
   install-tui:
@@ -230,11 +231,11 @@ tasks:
         platforms: [linux]
 
   install-windows:
-    desc: (WSL) Install the Windows TUI + GUI and the filecmp-win wrapper
+    desc: (WSL) Install the Windows TUI + GUI and the katcmp-win wrapper
     deps: [build-windows]
     vars:
       WIN_INSTALL_DIR:
-        sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/filecmp"
+        sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/katCompare"
     preconditions:
       - sh: case "{{.WIN_INSTALL_DIR}}" in /mnt/*) ;; *) exit 1;; esac
         msg: "Could not locate %LOCALAPPDATA% (set WIN_INSTALL_DIR=/mnt/c/...)"
@@ -243,17 +244,38 @@ tasks:
       - install -Dm755 {{.WIN_TUI}} "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe"
       - install -Dm755 {{.WIN_GUI}} "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"
       - mkdir -p {{.BINDIR}}
-      - sed 's|@WIN_DIR@|{{.WIN_INSTALL_DIR}}|' scripts/filecmp-win > {{.BINDIR}}/filecmp-win
-      - chmod 755 {{.BINDIR}}/filecmp-win
+      - sed 's|@WIN_DIR@|{{.WIN_INSTALL_DIR}}|' scripts/katcmp-win > {{.BINDIR}}/katcmp-win
+      - chmod 755 {{.BINDIR}}/katcmp-win
+
+  uninstall-legacy:
+    desc: Remove installs from before the rename to katCompare (filecmp, filecmp-gui, filecmp-win)
+    vars:
+      OLD_WIN_DIR:
+        sh: '[ -n "{{.WSL}}" ] && echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c ''echo %LOCALAPPDATA%'' 2>/dev/null | tr -d ''\r'')" 2>/dev/null)/Programs/filecmp" || true'
+    cmds:
+      - |
+        for f in "{{.BINDIR}}/filecmp{{.EXE}}" "{{.BINDIR}}/filecmp-gui{{.EXE}}" "{{.BINDIR}}/filecmp-win" \
+                 "{{.DATADIR}}/applications/filecmp-gui.desktop" \
+                 "{{.DATADIR}}/icons/hicolor/scalable/apps/filecmp-gui.svg"; do
+          if [ -e "$f" ]; then rm -f "$f" && echo "🗑️  Removed old $f"; fi
+        done
+      - cmd: |
+          d="{{.OLD_WIN_DIR}}"
+          case "$d" in /mnt/*/Programs/filecmp) ;; *) exit 0;; esac
+          for f in "$d/filecmp.exe" "$d/filecmp-gui.exe"; do
+            if [ -e "$f" ]; then rm -f "$f" && echo "🗑️  Removed old $f"; fi
+          done
+          if [ -d "$d" ] && rmdir "$d" 2>/dev/null; then echo "🗑️  Removed old $d"; fi
+        if: '[ -n "{{.WSL}}" ]'
 
   uninstall:
     desc: Remove installed binaries from BINDIR (and the Windows builds under WSL)
     vars:
       WIN_INSTALL_DIR:
-        sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/filecmp"
+        sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/katCompare"
     cmds:
       - rm -f {{.BINDIR}}/{{.BINARY_NAME}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
       - rm -f {{.DATADIR}}/applications/{{.GUI_BINARY}}.desktop {{.GUI_ICON}}
       - echo "🗑️  Removed {{.BINARY_NAME}} and {{.GUI_BINARY}} from {{.BINDIR}}"
-      - cmd: rm -f {{.BINDIR}}/filecmp-win "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe" "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"
+      - cmd: rm -f {{.BINDIR}}/katcmp-win "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe" "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"
         if: '[ -n "{{.WSL}}" ]'

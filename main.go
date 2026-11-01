@@ -6,8 +6,8 @@ import (
 	"os"
 	"runtime/debug"
 
-	"golang-fileCmp/internal/git"
-	"golang-fileCmp/internal/ui"
+	"katcompare/internal/git"
+	"katcompare/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -31,7 +31,7 @@ func main() {
 		return
 	}
 	if len(args) > 0 && (args[0] == "-v" || args[0] == "--version") {
-		fmt.Printf("filecmp %s\n", ui.Version)
+		fmt.Printf("katcmp %s\n", ui.Version)
 		return
 	}
 
