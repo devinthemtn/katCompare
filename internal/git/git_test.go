@@ -293,3 +293,20 @@ func TestListRefs(t *testing.T) {
 		t.Error("working tree offered when includeWorkingTree is false")
 	}
 }
+
+func TestMarkResolved(t *testing.T) {
+	root := conflictRepo(t)
+	if err := os.WriteFile(filepath.Join(root, "conflict.txt"), []byte("resolved\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkResolved(root, "conflict.txt"); err != nil {
+		t.Fatal(err)
+	}
+	files, err := ConflictedFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("ConflictedFiles after MarkResolved = %v, want none", files)
+	}
+}

@@ -31,6 +31,16 @@ func FindRoot() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// MarkResolved stages path (relative to root) with git add, which marks its
+// merge conflict as resolved.
+func MarkResolved(root, path string) error {
+	out, err := proc.Command("git", "-C", root, "add", "--", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git add failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // FileStatus describes a single file in a diff.
 type FileStatus struct {
 	Path       string

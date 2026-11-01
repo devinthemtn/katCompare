@@ -13,7 +13,8 @@ File Compare is a fast, color-coded diff and merge tool written in Go that is cl
 - 🎨 **Diffs you can read at a glance** — blue for additions, red for deletions, with old/new line numbers and live `equal / +added / -deleted` counts
 - 🌱 **Git-aware** — diff any ref against another ref, or against your working tree, without leaving the app
 - 📁 **Whole-directory comparison** — recursively finds every text file on both sides and flags identical (✓), different (✗), and one-side-only files
-- 🔀 **Cherry-pick merging** — choose individual insertions/deletions to apply and save to `<file>.merged`; originals are never overwritten
+- 🔀 **Cherry-pick merging** — choose individual lines or whole blocks of changes to apply and save them over the target file (the previous version is kept as `<file>.orig`)
+- ⚔️ **Built-in git conflict resolver** — step through each `<<<<<<<` conflict, take ours, theirs or both, then save and mark it resolved (`git add`)
 - 📋 **Directory sync** — copy files that exist on only one side into the other, in either direction
 - 👥 **Unified or side-by-side** views, switchable instantly
 - ✏️ **Hand off to your own tools** — open a file in your editor at the line you're looking at, send the pair to your external diff tool (meld, kdiff3, VS Code, nvimdiff…), or resolve git merge conflicts with `git mergetool`
@@ -82,11 +83,12 @@ The desktop app lives in [`filecmp-gui/`](filecmp-gui/). It imports the same dif
 - Compare two files or two directories (recursive, text-file-aware); the file list shows common files and files unique to either side, with identical/different indicators
 - **Git mode**: diff a ref against another ref, or a ref against the working tree
 - **Unified** and **side-by-side** diff views, color-coded like the TUI (blue = added, red = deleted)
-- **Merge view**: select which insertions/deletions to apply per line, then save to `<file>.merged` — the originals are never overwritten
+- **Merge view**: tick which insertions/deletions to apply (per line, or ▾ for a whole block), then save over the target file; the old version is kept as `<file>.orig`. A side that is a git revision can't be a target
+- **Conflicts view**: opens automatically for a conflicted file in git mode. Each conflict is a card showing Ours and Theirs; pick **Ours / Theirs / Both**, then **Save & mark resolved** (`git add`). Keys: `]`/`[` move, `o`/`t`/`b`/`B` choose, `u` undo
 - **Copy**: copy files that exist on only one side into the other directory, in either direction
 - Path autocomplete and native file/folder picker dialogs
 - File-list filtering
-- **External tools**: **Open left/right** (or **Open working copy** in git mode) opens the file in your editor; click any line number to open it at that line. **External diff** opens the pair in your diff tool, **Folders in diff tool** opens two compared directories, and **Resolve conflict** runs `git mergetool` on conflicted files (marked ⚠). Shortcuts: `e` = open, `d` = external diff. See [Editor & external diff tools](#editor--external-diff-tools)
+- **External tools**: **Open left/right** (or **Open working copy** in git mode) opens the file in your editor; click any line number to open it at that line. **External diff** opens the pair in your diff tool, **Folders in diff tool** opens two compared directories, and **Merge tool** runs `git mergetool` on conflicted files (marked ⚠). Shortcuts: `e` = open, `d` = external diff. See [Editor & external diff tools](#editor--external-diff-tools)
 
 ### Building the GUI
 
@@ -244,7 +246,7 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 - **]** / **[**: Jump to the next / previous change
 - **n**: Next file
 - **p**: Previous file
-- **m**: Enter merge mode (only available for files that exist on both sides)
+- **m**: Enter merge mode (only for files that exist on both sides); on a git conflict it opens the conflict resolver
 - **c**: Enter copy mode (only available when the loaded directories have unique files)
 - **e**: Edit the right file (the working tree file in git mode) at the cursor line
 - **E**: Edit the left file at the cursor line
@@ -256,14 +258,28 @@ Path autocomplete kicks in automatically as you type in either input field, sugg
 
 #### Merge Mode
 - **↑/↓** or **j/k**: Navigate through diff lines
-- **Space/Enter**: Toggle selection of current change
-- **t**: Switch merge target (left/right file)
+- **]** / **[**: Jump to the next / previous change
+- **Space**: Toggle the change on the current line
+- **Enter**: Toggle the whole block of changes
+- **t**: Switch merge target (left/right file; a git revision can't be a target)
 - **a**: Select all changes
 - **n**: Select no changes
-- **s**: Save merged result to a new `<file>.merged` file (the original is never overwritten)
+- **s**: Save over the target file (the previous version is kept as `<file>.orig`)
 - **Esc**: Return to diff view
 - **?**: Show help screen
 - **q/Ctrl+C**: Quit application
+
+#### Conflict Mode (`m` on a git conflict)
+- **↑/↓**, **j/k** or **]**/**[**: Move between conflicts
+- **o** / **t**: Take ours / theirs
+- **b** / **B**: Take both (ours first / theirs first)
+- **u**: Undo the choice
+- **O** / **T**: Take ours / theirs for every conflict
+- **s**: Save the chosen resolutions (unresolved conflicts keep their markers)
+- **A**: Save and mark resolved (`git add`)
+- **e**: Edit the file at the current conflict
+- **R**: Resolve in your external merge tool instead
+- **Esc**: Return to diff view
 
 #### Copy Mode (Directory Comparison Only)
 - **↑/↓** or **j/k**: Navigate through unique files
@@ -303,7 +319,7 @@ The **TUI prefers terminal tools** (vimdiff, nvimdiff, or a custom `difftool.<na
 - **Git mode** runs `git difftool <ref> [<ref>] -- <file>`.
 - **Plain files and folders** don't need to be in a git repository. Files are passed to `git difftool --no-index`, which works anywhere. If git isn't installed or no tool is configured, the app launches the tool directly: a `difftool.<name>.cmd` you've defined, or the first of meld / kdiff3 / VS Code it finds (nvim/vim `-d` too, but only in the TUI). A file that exists on only one side is compared against an empty file.
 - **Whole folders** open directly in tools that support directories (meld, kdiff3, Beyond Compare).
-- **Merge conflicts**: in git mode (ref vs working tree), files with unresolved conflicts during a merge or rebase are marked ⚠. **Resolve conflict** / `R` runs `git mergetool -- <file>`, then reloads the list.
+- **Merge conflicts**: in git mode (ref vs working tree), files with unresolved conflicts during a merge or rebase are marked ⚠. Resolve them in the built-in conflict view (GUI **Conflicts**, TUI `m`), or with **Merge tool** / `R`, which runs `git mergetool -- <file>` and then reloads the list.
 
 ## Color Legend
 
@@ -423,16 +439,16 @@ examples/       # Sample files for testing
 | Key | File Selection | Diff View | Side-by-Side | Merge Mode | Copy Mode | Description |
 |-----|----------------|-----------|--------------|------------|-----------|-------------|
 | `Tab` | ✅ | ❌ | ❌ | ❌ | ❌ | Switch input fields / cycle suggestions |
-| `Enter` | ✅ | ❌ | ❌ | ✅ | ✅ | Load entered path / Toggle change / Toggle file |
+| `Enter` | ✅ | ❌ | ❌ | ✅ | ✅ | Load entered path / Toggle change block / Toggle file |
 | `↑/↓` | ✅ | ✅ | ✅ | ✅ | ✅ | Navigate lists/lines |
 | `j/k` | ❌ | ✅ | ✅ | ✅ | ✅ | Vim-style navigation |
 | `h/l` or `←/→` | ❌ | ❌ | ✅ | ❌ | ❌ | Scroll left/right |
 | `g/G` | ❌ | ✅ | ✅ | ❌ | ❌ | Jump to top/bottom |
-| `]/[` | ❌ | ✅ | ✅ | ❌ | ❌ | Jump to next/previous change |
+| `]/[` | ❌ | ✅ | ✅ | ✅ | ❌ | Jump to next/previous change |
 | `/` | ✅ | ❌ | ❌ | ❌ | ❌ | Filter file list |
 | `s` | ❌ | ✅ | ✅ | ✅ | ✅ | Switch view mode / Save result / Copy files |
 | `n/p` | ❌ | ✅ | ✅ | ❌ | ❌ | Next/previous file |
-| `m` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter merge mode |
+| `m` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter merge mode / conflict resolver |
 | `c` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter copy mode |
 | `e`/`E` | ❌ | ✅ | ✅ | ❌ | ❌ | Edit right/left file in your editor |
 | `D` | ❌ | ✅ | ✅ | ❌ | ❌ | Open in external diff tool |
@@ -488,7 +504,6 @@ task install
 Contributions are welcome! Areas for improvement:
 - Additional file type support
 - Syntax highlighting within diffs
-- Advanced merge conflict resolution
 - Copy operation undo/rollback
 - Export diff results
 - Configuration file support
@@ -507,10 +522,10 @@ Please feel free to submit issues, feature requests, or pull requests.
 - [x] File filtering by name
 - [x] Path autocomplete
 - [x] Integration with Git for ref/working-tree diffs
+- [x] Built-in git merge conflict resolution
 - [x] Native desktop GUI (Wails) — see [Desktop GUI (Wails)](#desktop-gui-wails)
 - [ ] Syntax highlighting for code diffs
 - [ ] Three-way merge support
-- [ ] Merge conflict resolution
 - [ ] Export diffs to HTML/PDF
 - [ ] Configuration file support
 - [ ] Plugin system for custom file types

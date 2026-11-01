@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang-fileCmp/internal/conflict"
 	"golang-fileCmp/internal/differ"
 	"golang-fileCmp/internal/external"
 	"golang-fileCmp/internal/file"
@@ -510,13 +511,21 @@ func sbsTypeString(t differ.SideBySideRowType) string {
 
 // ---- Merge ----
 
-// SaveMerge recomputes the diff for relPath and writes a "<file>.merged"
-// file containing the given selection of changes applied to the chosen
-// target side. The original files are never overwritten.
+// SaveMerge recomputes the diff for relPath, applies the selected changes to
+// the target side and saves the result over that side's file, keeping the
+// previous version as "<file>.orig". The target must be a real file (not a
+// git ref).
 func (a *App) SaveMerge(req MergeSaveRequest) (string, error) {
 	comp, ok := a.allFiles[req.RelPath]
 	if !ok || comp.Source != file.SourceBoth {
 		return "", fmt.Errorf("cannot merge: file must exist on both sides")
+	}
+	if req.Target != "left" && req.Target != "right" {
+		return "", fmt.Errorf("invalid merge target: %s", req.Target)
+	}
+	targetPath := a.editablePath(comp, req.Target)
+	if targetPath == "" {
+		return "", fmt.Errorf("the %s side is a git revision, not a file on disk", req.Target)
 	}
 
 	diff := a.differ.CompareStrings(comp.LeftFile.Path, comp.RightFile.Path, comp.LeftFile.Content, comp.RightFile.Content)
@@ -533,22 +542,108 @@ func (a *App) SaveMerge(req MergeSaveRequest) (string, error) {
 	}
 
 	var result *merge.MergeResult
-	var targetPath string
 	if req.Target == "left" {
 		result = a.merger.ApplyToLeft(diff, selection)
-		targetPath = diff.LeftFile + ".merged"
-	} else if req.Target == "right" {
-		result = a.merger.ApplyToRight(diff, selection)
-		targetPath = diff.RightFile + ".merged"
 	} else {
-		return "", fmt.Errorf("invalid merge target: %s", req.Target)
+		result = a.merger.ApplyToRight(diff, selection)
 	}
 
-	if err := os.WriteFile(targetPath, []byte(result.Content), 0644); err != nil {
-		return "", fmt.Errorf("failed to save merged file: %w", err)
+	backup, err := merge.SaveWithBackup(targetPath, result.Content)
+	if err != nil {
+		return "", err
 	}
+	return fmt.Sprintf("Saved %s (%d change(s) applied, %d skipped); previous version in %s",
+		targetPath, result.Applied, result.Skipped, filepath.Base(backup)), nil
+}
 
-	return fmt.Sprintf("Saved merged result to %s (%d change(s) applied, %d skipped)", targetPath, result.Applied, result.Skipped), nil
+// ---- Conflicts ----
+
+// ConflictBlockDTO is one conflict in a working-tree file.
+type ConflictBlockDTO struct {
+	StartLine   int      `json:"startLine"`
+	OursLabel   string   `json:"oursLabel"`
+	TheirsLabel string   `json:"theirsLabel"`
+	BaseLabel   string   `json:"baseLabel"`
+	Ours        []string `json:"ours"`
+	Base        []string `json:"base"`
+	Theirs      []string `json:"theirs"`
+	Before      []string `json:"before"` // a few unchanged lines above, for context
+	After       []string `json:"after"`
+}
+
+// conflictFile returns the on-disk path of a conflicted file in git mode.
+func (a *App) conflictFile(relPath string) (string, error) {
+	if !a.gitMode || !a.conflicts[relPath] {
+		return "", fmt.Errorf("%s has no merge conflicts", relPath)
+	}
+	return filepath.Join(a.gitRoot, relPath), nil
+}
+
+// GetConflicts parses the conflict markers in a conflicted working-tree file.
+func (a *App) GetConflicts(relPath string) ([]ConflictBlockDTO, error) {
+	path, err := a.conflictFile(relPath)
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	f := conflict.Parse(string(content))
+	blocks := make([]ConflictBlockDTO, len(f.Blocks))
+	for i, b := range f.Blocks {
+		before, after := f.Context(i, 3)
+		blocks[i] = ConflictBlockDTO{
+			StartLine: b.StartLine, OursLabel: b.OursLabel, TheirsLabel: b.TheirsLabel, BaseLabel: b.BaseLabel,
+			Ours: b.Ours, Base: b.Base, Theirs: b.Theirs, Before: before, After: after,
+		}
+	}
+	return blocks, nil
+}
+
+// SaveConflicts writes the file with each block resolved by choices[i]
+// ("ours", "theirs", "both", "both-theirs-first", or "" to leave it). With
+// markResolved, and no conflicts left, it also stages the file (git add).
+// The file list should be reloaded afterwards.
+func (a *App) SaveConflicts(relPath string, choices []string, markResolved bool) (string, error) {
+	path, err := a.conflictFile(relPath)
+	if err != nil {
+		return "", err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	f := conflict.Parse(string(content))
+	if len(choices) != len(f.Blocks) {
+		return "", fmt.Errorf("%s changed on disk (now %d conflicts, expected %d) — reload and try again",
+			relPath, len(f.Blocks), len(choices))
+	}
+	parsed := make([]conflict.Choice, len(choices))
+	for i, c := range choices {
+		parsed[i] = conflict.ParseChoice(c)
+	}
+	remaining := conflict.Remaining(len(f.Blocks), parsed)
+	if markResolved && remaining > 0 {
+		return "", fmt.Errorf("%d conflict(s) still unresolved", remaining)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(f.Render(parsed)), info.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("failed to save %s: %w", relPath, err)
+	}
+	if markResolved {
+		if err := git.MarkResolved(a.gitRoot, relPath); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Resolved %s and staged it (git add).", relPath), nil
+	}
+	if remaining > 0 {
+		return fmt.Sprintf("Saved %s — %d conflict(s) left.", relPath, remaining), nil
+	}
+	return fmt.Sprintf("Saved %s — no conflicts left; mark it resolved to stage it.", relPath), nil
 }
 
 // ---- Copy ----
