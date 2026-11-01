@@ -127,18 +127,47 @@ type MergeSaveRequest struct {
 
 // ---- Dialogs ----
 
-func (a *App) SelectDirectory() (string, error) {
+// dialogStartDir picks the folder a file dialog opens in: the folder of the
+// path already entered for that side, or else the current directory (the one
+// the app was launched from, e.g. a WSL directory via filecmp-win).
+func dialogStartDir(current string) string {
+	if current = strings.TrimSpace(current); current != "" {
+		if info, err := os.Stat(current); err == nil {
+			if info.IsDir() {
+				return current
+			}
+			return filepath.Dir(current)
+		}
+		if dir := filepath.Dir(current); dir != "." {
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				return dir
+			}
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return ""
+}
+
+// SelectDirectory opens a folder picker starting near current (the path in
+// the input box, may be empty).
+func (a *App) SelectDirectory(current string) (string, error) {
 	return application.Get().Dialog.OpenFile().
 		SetTitle("Select Directory").
+		SetDirectory(dialogStartDir(current)).
 		CanChooseDirectories(true).
 		CanChooseFiles(false).
 		CanCreateDirectories(true).
 		PromptForSingleSelection()
 }
 
-func (a *App) SelectFile() (string, error) {
+// SelectFile opens a file picker starting near current (the path in the
+// input box, may be empty).
+func (a *App) SelectFile(current string) (string, error) {
 	return application.Get().Dialog.OpenFile().
 		SetTitle("Select File").
+		SetDirectory(dialogStartDir(current)).
 		CanChooseFiles(true).
 		PromptForSingleSelection()
 }
