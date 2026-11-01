@@ -18,6 +18,14 @@ func FindRoot() (string, error) {
 		return "", fmt.Errorf("git is not installed")
 	}
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			msg := strings.TrimSpace(string(exitErr.Stderr))
+			msg = strings.TrimPrefix(strings.SplitN(msg, "\n", 2)[0], "fatal: ")
+			if msg != "" && !strings.HasPrefix(msg, "not a git repository") {
+				return "", fmt.Errorf("git: %s", msg)
+			}
+		}
 		return "", fmt.Errorf("not inside a git repository")
 	}
 	return strings.TrimSpace(string(out)), nil

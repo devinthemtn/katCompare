@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"golang-fileCmp/internal/git"
 	"golang-fileCmp/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,7 @@ var version = "dev"
 
 func main() {
 	ui.Version = resolveVersion()
+	git.TrustWSLPaths()
 
 	// Create the model
 	model := ui.New()
