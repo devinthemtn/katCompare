@@ -213,7 +213,7 @@ echo "Press any key to continue..."
 read -n 1 -s
 
 # Launch the comparison tool
-../filecmp project-old project-new
+../katcmp project-old project-new
 
 echo ""
 echo "=========================================="
@@ -258,7 +258,7 @@ if [[ $response =~ ^[Yy]$ ]]; then
     echo "🗑️  Demo files cleaned up"
 else
     echo "📁 Demo files kept in ./all-files-demo/"
-    echo "   You can re-run: ./filecmp all-files-demo/project-old all-files-demo/project-new"
+    echo "   You can re-run: ./katcmp all-files-demo/project-old all-files-demo/project-new"
 fi
 
 echo ""

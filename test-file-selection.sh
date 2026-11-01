@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Test script to verify file selection behavior in golang-fileCmp
+# Test script to verify file selection behavior in katCompare
 echo "=========================================="
 echo "  File Selection Behavior Test"
 echo "=========================================="
@@ -75,7 +75,7 @@ echo
 echo "Press Enter to start test 1..."
 read
 
-../filecmp version1.txt version2.txt
+../katcmp version1.txt version2.txt
 
 echo
 echo "Test 2: File navigation with arrow keys"
@@ -103,7 +103,7 @@ cp version2.txt dir2/version1.txt
 cp config.new dir2/config
 cp data_updated.csv dir2/data.csv
 
-../filecmp dir1 dir2
+../katcmp dir1 dir2
 
 echo
 echo "Test 3: Interactive file loading"
@@ -120,7 +120,7 @@ echo
 echo "Press Enter to start test 3..."
 read
 
-../filecmp
+../katcmp
 
 echo
 echo "=========================================="

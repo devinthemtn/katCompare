@@ -1,6 +1,6 @@
 # TUI binary (make build)
-/filecmp
-/filecmp.exe
+/katcmp
+/katcmp.exe
 
 # Multi-platform builds (make build-all)
 /build/

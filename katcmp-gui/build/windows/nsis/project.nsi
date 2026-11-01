@@ -19,9 +19,9 @@ Unicode true
 ####
 ## The following information is taken from the wails_tools.nsh file, but they can be overwritten here.
 ####
-## !define INFO_PROJECTNAME    "my-project" # Default "filecmp-gui"
+## !define INFO_PROJECTNAME    "my-project" # Default "katcmp-gui"
 ## !define INFO_COMPANYNAME    "My Company" # Default "Thomas Koefod"
-## !define INFO_PRODUCTNAME    "My Product Name" # Default "File Compare"
+## !define INFO_PRODUCTNAME    "My Product Name" # Default "katCompare"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "1.2.0"
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "Copyright © 2026 Thomas Koefod"
 ###

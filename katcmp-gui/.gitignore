@@ -7,7 +7,7 @@ frontend/node_modules
 frontend/bindings
 
 # Generated during builds
-build/linux/filecmp-gui.desktop
+build/linux/katcmp-gui.desktop
 build/linux/appimage/build
 build/darwin/icons.icns
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe

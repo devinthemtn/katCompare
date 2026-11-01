@@ -8,13 +8,13 @@
         AllowPromptForPassword="false">
     </Settings>
     <Installer
-        Path="filecmp-gui"
+        Path="katcmp-gui"
         Arguments=""
-        InstallLocation="C:\Program Files\Thomas Koefod\File Compare">
+        InstallLocation="C:\Program Files\Thomas Koefod\katCompare">
     </Installer>
     <PackageInformation
-        PackageName="File Compare"
-        PackageDisplayName="File Compare"
+        PackageName="katCompare"
+        PackageDisplayName="katCompare"
         PublisherName="CN=Thomas Koefod"
         PublisherDisplayName="Thomas Koefod"
         Version="1.2.0.0"
@@ -25,10 +25,10 @@
         </Capabilities>
         <Applications>
             <Application
-                Id="com.koefod.filecmp-gui"
+                Id="com.koefod.katcompare"
                 Description="Compare files and directories side by side"
-                DisplayName="File Compare"
-                ExecutableName="filecmp-gui"
+                DisplayName="katCompare"
+                ExecutableName="katcmp-gui"
                 EntryPoint="Windows.FullTrustApplication">
                 
             </Application>
@@ -41,13 +41,13 @@
         </Dependencies>
         <Properties>
             <Framework>false</Framework>
-            <DisplayName>File Compare</DisplayName>
+            <DisplayName>katCompare</DisplayName>
             <PublisherDisplayName>Thomas Koefod</PublisherDisplayName>
             <Description>Compare files and directories side by side</Description>
             <Logo>Assets\AppIcon.png</Logo>
         </Properties>
     </PackageInformation>
-    <SaveLocation PackagePath="filecmp-gui.msix" />
+    <SaveLocation PackagePath="katcmp-gui.msix" />
     <PackageIntegrity>
         <CertificatePath></CertificatePath>
     </PackageIntegrity>

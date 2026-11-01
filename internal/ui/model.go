@@ -9,12 +9,12 @@ import (
 	"sort"
 	"strings"
 
-	"golang-fileCmp/internal/conflict"
-	"golang-fileCmp/internal/differ"
-	"golang-fileCmp/internal/external"
-	"golang-fileCmp/internal/file"
-	"golang-fileCmp/internal/git"
-	"golang-fileCmp/internal/merge"
+	"katcompare/internal/conflict"
+	"katcompare/internal/differ"
+	"katcompare/internal/external"
+	"katcompare/internal/file"
+	"katcompare/internal/git"
+	"katcompare/internal/merge"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

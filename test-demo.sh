@@ -1,21 +1,21 @@
 #!/bin/bash
 
 # Test Demo Script for File Comparison TUI Tool
-# This script demonstrates the various ways to use the filecmp tool
+# This script demonstrates the various ways to use the katcmp tool
 
 echo "🚀 File Comparison TUI Tool - Demo Script"
 echo "========================================="
 echo
 
 # Check if the binary exists
-if [ ! -f "./filecmp" ]; then
-    echo "❌ filecmp binary not found. Building..."
-    go build -o filecmp
+if [ ! -f "./katcmp" ]; then
+    echo "❌ katcmp binary not found. Building..."
+    go build -o katcmp
     if [ $? -ne 0 ]; then
-        echo "❌ Failed to build filecmp"
+        echo "❌ Failed to build katcmp"
         exit 1
     fi
-    echo "✅ Built filecmp successfully"
+    echo "✅ Built katcmp successfully"
 fi
 
 echo "📁 Available test files:"
@@ -26,24 +26,24 @@ echo "- examples/project-v2/ (directory)"
 echo
 
 echo "🔧 Testing help output:"
-echo "Command: ./filecmp --help"
+echo "Command: ./katcmp --help"
 echo "----------------------------------------"
-./filecmp --help
+./katcmp --help
 echo
 
 echo "📋 Demo Commands Available:"
 echo
 echo "1. Compare two files:"
-echo "   ./filecmp examples/file1.txt examples/file2.txt"
+echo "   ./katcmp examples/file1.txt examples/file2.txt"
 echo
 echo "2. Compare two directories:"
-echo "   ./filecmp examples/project-v1 examples/project-v2"
+echo "   ./katcmp examples/project-v1 examples/project-v2"
 echo
 echo "3. Start with one file loaded:"
-echo "   ./filecmp examples/file1.txt"
+echo "   ./katcmp examples/file1.txt"
 echo
 echo "4. Start with interactive mode:"
-echo "   ./filecmp"
+echo "   ./katcmp"
 echo
 
 echo "💡 Interactive Controls (once in TUI):"
@@ -86,13 +86,13 @@ echo
 echo "🚀 Ready to run! Try one of these commands:"
 echo
 echo "  # Compare files directly:"
-echo "  ./filecmp examples/file1.txt examples/file2.txt"
+echo "  ./katcmp examples/file1.txt examples/file2.txt"
 echo
 echo "  # Compare project directories:"
-echo "  ./filecmp examples/project-v1 examples/project-v2"
+echo "  ./katcmp examples/project-v1 examples/project-v2"
 echo
 echo "  # Interactive mode:"
-echo "  ./filecmp"
+echo "  ./katcmp"
 echo
 
 echo "✨ Enjoy comparing files with visual diffs!"

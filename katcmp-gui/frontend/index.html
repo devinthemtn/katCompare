@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-    <title>File Compare</title>
+    <title>katCompare</title>
 </head>
 <body>
 <div id="app">
@@ -111,7 +111,7 @@
     <div class="modal-overlay hidden" id="help-modal">
         <div class="modal help-modal" role="dialog" aria-labelledby="help-title">
             <div class="modal-header">
-                <h2 id="help-title">Help — File Compare <span class="help-version" id="help-version"></span></h2>
+                <h2 id="help-title">Help — katCompare <span class="help-version" id="help-version"></span></h2>
                 <button class="btn btn-icon" id="help-modal-close">✕</button>
             </div>
             <div class="modal-body help-body">
@@ -162,7 +162,7 @@
                 <section class="help-section">
                     <h3>External tools</h3>
                     <dl class="help-keys">
-                        <dt>Editor</dt><dd><code>$FILECMP_EDITOR</code>, then <code>$VISUAL</code>, then <code>$EDITOR</code>, then the OS default</dd>
+                        <dt>Editor</dt><dd><code>$KATCMP_EDITOR</code>, then <code>$VISUAL</code>, then <code>$EDITOR</code>, then the OS default</dd>
                         <dt>Diff / merge tool</dt><dd><code>git config diff.tool</code> / <code>merge.tool</code> (e.g. meld, kdiff3)</dd>
                         <dt><span class="help-ui">Resolve conflict</span></dt><dd>Shown for conflicted files in Git mode; runs <code>git mergetool</code></dd>
                     </dl>
@@ -170,7 +170,7 @@
 
                 <section class="help-section">
                     <h3>Config files</h3>
-                    <p>File Compare has no config file of its own. Tool choices are read from git config:</p>
+                    <p>katCompare has no config file of its own. Tool choices are read from git config:</p>
                     <dl class="help-keys help-keys-spaced">
                         <dt>Global</dt><dd><code>~/.gitconfig</code> or <code>~/.config/git/config</code><br>
                             Windows: <code>%USERPROFILE%\.gitconfig</code></dd>

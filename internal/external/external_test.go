@@ -78,11 +78,19 @@ func TestEditorCommandPrecedence(t *testing.T) {
 
 	t.Setenv("EDITOR", "nvim")
 	t.Setenv("VISUAL", "emacsclient -c")
-	t.Setenv("FILECMP_EDITOR", "zed")
+	t.Setenv("KATCMP_EDITOR", "zed")
 
 	cmd, _ := EditorCommand("/x/f.txt", 0, false)
 	if got := filepath.Base(cmd.Path); got != "zed" {
-		t.Errorf("FILECMP_EDITOR should win, got %s", got)
+		t.Errorf("KATCMP_EDITOR should win, got %s", got)
+	}
+
+	// The pre-rename variable still works.
+	t.Setenv("KATCMP_EDITOR", "")
+	t.Setenv("FILECMP_EDITOR", "zed")
+	cmd, _ = EditorCommand("/x/f.txt", 0, false)
+	if got := filepath.Base(cmd.Path); got != "zed" {
+		t.Errorf("FILECMP_EDITOR should still win, got %s", got)
 	}
 
 	t.Setenv("FILECMP_EDITOR", "")
@@ -139,12 +147,12 @@ func TestEditorCommandTUIPrefersTerminalEditor(t *testing.T) {
 		t.Errorf("TUI should fall back to GUI $VISUAL, got %v", cmd.Args)
 	}
 
-	// FILECMP_EDITOR is an explicit choice and wins even if it's a GUI editor.
+	// KATCMP_EDITOR is an explicit choice and wins even if it's a GUI editor.
 	t.Setenv("EDITOR", "emacsclient -t")
-	t.Setenv("FILECMP_EDITOR", "code --wait")
+	t.Setenv("KATCMP_EDITOR", "code --wait")
 	cmd, _ = EditorCommand("/x/f.txt", 0, false)
 	if cmd.Args[0] != "code" {
-		t.Errorf("FILECMP_EDITOR should win in the TUI, got %v", cmd.Args)
+		t.Errorf("KATCMP_EDITOR should win in the TUI, got %v", cmd.Args)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"golang-fileCmp/internal/git"
+	"katcompare/internal/git"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -30,7 +30,7 @@ func main() {
 	version = resolveVersion()
 	for _, arg := range os.Args[1:] {
 		if arg == "-v" || arg == "--version" {
-			fmt.Printf("filecmp-gui %s\n", version)
+			fmt.Printf("katcmp-gui %s\n", version)
 			return
 		}
 	}
@@ -38,7 +38,7 @@ func main() {
 	git.TrustWSLPaths()
 
 	app := application.New(application.Options{
-		Name:        "filecmp-gui",
+		Name:        "katcmp-gui",
 		Description: "Compare files and directories side by side",
 		Icon:        icon,
 		Services: []application.Service{
@@ -51,12 +51,12 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 		Linux: application.LinuxOptions{
-			ProgramName: "filecmp-gui",
+			ProgramName: "katcmp-gui",
 		},
 	})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "File Compare",
+		Title:            "katCompare",
 		Width:            1280,
 		Height:           860,
 		MinWidth:         900,

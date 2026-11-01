@@ -54,8 +54,8 @@ func TestFileAtRefKnownFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileAtRef(HEAD, go.mod) failed: %v", err)
 	}
-	if !strings.Contains(content, "golang-fileCmp") {
-		t.Errorf("go.mod at HEAD should contain module name, got: %q", content[:min(len(content), 200)])
+	if !strings.HasPrefix(content, "module ") {
+		t.Errorf("go.mod at HEAD should start with a module line, got: %q", content[:min(len(content), 200)])
 	}
 }
 
@@ -167,7 +167,7 @@ func TestReadWorkingTreeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadWorkingTreeFile(go.mod) failed: %v", err)
 	}
-	if !strings.Contains(content, "golang-fileCmp") {
+	if !strings.Contains(content, "katcompare") {
 		t.Errorf("go.mod should contain module name, got: %q", content[:min(len(content), 200)])
 	}
 }

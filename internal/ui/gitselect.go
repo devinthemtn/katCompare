@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"golang-fileCmp/internal/git"
+	"katcompare/internal/git"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

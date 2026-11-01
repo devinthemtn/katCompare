@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Comprehensive Merge Example for golang-fileCmp
+# Comprehensive Merge Example for katCompare
 # This script demonstrates the new merge functionality
 
 echo "=========================================="
@@ -94,7 +94,7 @@ echo
 
 echo "How to use Merge Mode:"
 echo "====================="
-echo "1. Run: ../filecmp config-old.yaml config-new.yaml"
+echo "1. Run: ../katcmp config-old.yaml config-new.yaml"
 echo "2. Press Ctrl+D to start comparing"
 echo "3. Navigate through differences with ↑/↓ or j/k"
 echo "4. Press 'm' to enter MERGE MODE"
@@ -151,7 +151,7 @@ read -n 1 -s
 echo
 
 # Launch the comparison tool
-../filecmp config-old.yaml config-new.yaml
+../katcmp config-old.yaml config-new.yaml
 
 echo
 echo "=========================================="

@@ -52,7 +52,7 @@ echo "4. Use ↑/↓ to navigate"
 echo "5. Press 'Q' to quit"
 echo
 
-./filecmp test-side-by-side/left test-side-by-side/right
+./katcmp test-side-by-side/left test-side-by-side/right
 
 # Cleanup
 echo "Demo finished. Cleaning up test files..."

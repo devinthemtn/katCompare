@@ -8,13 +8,13 @@ import (
 	"sort"
 	"strings"
 
-	"golang-fileCmp/internal/conflict"
-	"golang-fileCmp/internal/differ"
-	"golang-fileCmp/internal/external"
-	"golang-fileCmp/internal/file"
-	"golang-fileCmp/internal/git"
-	"golang-fileCmp/internal/merge"
-	"golang-fileCmp/internal/proc"
+	"katcompare/internal/conflict"
+	"katcompare/internal/differ"
+	"katcompare/internal/external"
+	"katcompare/internal/file"
+	"katcompare/internal/git"
+	"katcompare/internal/merge"
+	"katcompare/internal/proc"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -130,7 +130,7 @@ type MergeSaveRequest struct {
 
 // dialogStartDir picks the folder a file dialog opens in: the folder of the
 // path already entered for that side, or else the current directory (the one
-// the app was launched from, e.g. a WSL directory via filecmp-win).
+// the app was launched from, e.g. a WSL directory via katcmp-win).
 func dialogStartDir(current string) string {
 	if current = strings.TrimSpace(current); current != "" {
 		if info, err := os.Stat(current); err == nil {

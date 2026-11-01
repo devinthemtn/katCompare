@@ -282,7 +282,7 @@ echo "Press any key to start the demo..."
 read -n 1 -s
 
 # Launch the comparison tool
-../filecmp project-old project-new
+../katcmp project-old project-new
 
 echo ""
 echo "=========================================="

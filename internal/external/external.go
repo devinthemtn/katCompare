@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"golang-fileCmp/internal/proc"
+	"katcompare/internal/proc"
 )
 
 // NoDiffToolHint is shown when no diff tool is configured or detected.
@@ -23,7 +23,12 @@ const NoMergeToolHint = "no merge tool configured — run `git config --global m
 // ---- Editor -----------------------------------------------------------------
 
 // editorEnvVars are checked in order to find the user's editor.
-var editorEnvVars = []string{"FILECMP_EDITOR", "VISUAL", "EDITOR"}
+// FILECMP_EDITOR is the name from before the rename to katCompare.
+var editorEnvVars = []string{"KATCMP_EDITOR", "FILECMP_EDITOR", "VISUAL", "EDITOR"}
+
+// explicitEditorVars name an editor chosen for this app specifically, which
+// wins even in the TUI when it's a GUI editor.
+var explicitEditorVars = map[string]bool{"KATCMP_EDITOR": true, "FILECMP_EDITOR": true}
 
 // terminalEditors always need a terminal to run.
 var terminalEditors = map[string]bool{
@@ -46,10 +51,10 @@ var colonLineEditors = map[string]bool{
 
 // EditorCommand returns a command that opens path in the user's editor,
 // jumping to line when it is > 0 and the editor supports it. The editor is
-// taken from FILECMP_EDITOR, then $VISUAL, then $EDITOR, falling back to the
+// taken from KATCMP_EDITOR (or the older FILECMP_EDITOR), then $VISUAL, then $EDITOR, falling back to the
 // OS default opener. When gui is true (no terminal attached) editors that
 // need a terminal are skipped. When gui is false the TUI prefers a terminal
-// editor: FILECMP_EDITOR is an explicit choice and always wins, but a GUI
+// editor: KATCMP_EDITOR is an explicit choice and always wins, but a GUI
 // $VISUAL (e.g. "emacsclient -c") gives way to a terminal $EDITOR.
 func EditorCommand(path string, line int, gui bool) (*exec.Cmd, error) {
 	var guiFallback []string
@@ -65,7 +70,7 @@ func EditorCommand(path string, line int, gui bool) (*exec.Cmd, error) {
 		if gui && terminal {
 			continue
 		}
-		if !gui && !terminal && env != "FILECMP_EDITOR" {
+		if !gui && !terminal && !explicitEditorVars[env] {
 			if guiFallback == nil {
 				guiFallback = fields
 			}

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"golang-fileCmp/internal/differ"
+	"katcompare/internal/differ"
 )
 
 // ---- helpers ----------------------------------------------------------------

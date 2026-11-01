@@ -5,13 +5,13 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "filecmp-gui"
+    !define INFO_PROJECTNAME "katcmp-gui"
 !endif
 !ifndef INFO_COMPANYNAME
     !define INFO_COMPANYNAME "Thomas Koefod"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "File Compare"
+    !define INFO_PRODUCTNAME "katCompare"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "1.2.0"

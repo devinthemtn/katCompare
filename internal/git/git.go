@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"golang-fileCmp/internal/proc"
+	"katcompare/internal/proc"
 )
 
 // FindRoot returns the absolute path of the git repository root,
