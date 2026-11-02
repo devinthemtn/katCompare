@@ -46,10 +46,11 @@ This installs `katcmp` (TUI) and `katcmp-gui` (GUI). Use `task install-tui` / `t
 
 ```bash
 katcmp-win ./a ./b          # Windows GUI in a native window
+katcmp-win --wait ./a ./b   # Windows GUI; returns when its window closes
 katcmp-win --tui ./a ./b    # Windows TUI in this terminal
 ```
 
-The wrapper converts path arguments to Windows paths. Use `task install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `task build-windows` / `task build-gui-windows` just build them (output goes to `build/`).
+The wrapper converts path arguments to Windows paths. The plain GUI form returns immediately, so use `--wait` when another program runs `katcmp-win` as its diff tool (`git difftool`, katbackup's `diff_tool`): those delete their temporary files as soon as the command returns, before the GUI can read them. Use `task install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `task build-windows` / `task build-gui-windows` just build them (output goes to `build/`).
 
 ### Desktop GUI
 

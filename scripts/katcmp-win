@@ -2,7 +2,13 @@
 # katcmp-win: run the Windows build of katcmp from inside WSL.
 #
 #   katcmp-win [args]          Windows GUI (detached, native Windows window)
+#   katcmp-win --wait [args]   Windows GUI, returning only when its window closes
 #   katcmp-win --tui [args]    Windows TUI in this terminal
+#
+# Use --wait when another program launches katcmp-win as its diff tool and
+# deletes temporary files once the command returns (git difftool, katbackup):
+# without it the command returns immediately, so the files can be gone before
+# the GUI reads them.
 #
 # Arguments that are existing paths are translated to Windows paths, so
 # "katcmp-win ./a ./b" works the same as "katcmp ./a ./b".
@@ -12,11 +18,23 @@ WIN_DIR="@WIN_DIR@"
 
 exe="$WIN_DIR/katcmp-gui.exe"
 gui=1
-if [ "$1" = "--tui" ]; then
-	gui=0
-	exe="$WIN_DIR/katcmp.exe"
-	shift
-fi
+wait=0
+while :; do
+	case "$1" in
+	--tui)
+		gui=0
+		exe="$WIN_DIR/katcmp.exe"
+		shift
+		;;
+	--wait)
+		wait=1
+		shift
+		;;
+	*)
+		break
+		;;
+	esac
+done
 
 if [ ! -x "$exe" ]; then
 	echo "katcmp-win: $exe not found (re-run 'task install')" >&2
@@ -31,8 +49,10 @@ for arg do
 	set -- "$@" "$arg"
 done
 
-if [ "$gui" = 1 ]; then
-	"$exe" "$@" >/dev/null 2>&1 &
-else
+if [ "$gui" = 0 ]; then
 	exec "$exe" "$@"
 fi
+if [ "$wait" = 1 ]; then
+	exec "$exe" "$@" >/dev/null 2>&1
+fi
+"$exe" "$@" >/dev/null 2>&1 &
