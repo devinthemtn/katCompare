@@ -1,20 +1,36 @@
 #!/bin/sh
 # katcmp-win: run the Windows build of katcmp from inside WSL.
 #
-#   katcmp-win [args]          Windows GUI (detached, native Windows window)
-#   katcmp-win --wait [args]   Windows GUI, returning only when its window closes
-#   katcmp-win --tui [args]    Windows TUI in this terminal
-#
-# Use --wait when another program launches katcmp-win as its diff tool and
-# deletes temporary files once the command returns (git difftool, katbackup):
-# without it the command returns immediately, so the files can be gone before
-# the GUI reads them.
-#
 # Arguments that are existing paths are translated to Windows paths, so
 # "katcmp-win ./a ./b" works the same as "katcmp ./a ./b".
 #
 # @WIN_DIR@ is replaced by "task install" with the Windows install directory.
 WIN_DIR="@WIN_DIR@"
+
+usage() {
+	cat <<'EOF'
+katcmp-win: run the Windows build of katCompare from inside WSL.
+
+Usage:
+  katcmp-win [left_path] [right_path]          Windows GUI, returns immediately
+  katcmp-win --wait [left_path] [right_path]   Windows GUI, returns when its window closes
+  katcmp-win --tui [args]                      Windows TUI in this terminal
+
+Options:
+  --wait       Keep running until the GUI window closes
+  --tui        Run the TUI instead of the GUI (see: katcmp-win --tui --help)
+  -h, --help   Show this help
+
+Paths that exist are converted to Windows paths automatically.
+
+Use --wait when another program runs katcmp-win as its diff tool. Those programs
+delete their temporary files as soon as the command returns, so without --wait
+the files can be gone before the GUI reads them. For example:
+
+  git config --global difftool.katcmp.cmd 'katcmp-win --wait "$LOCAL" "$REMOTE"'
+  diff_tool = 'katcmp-win --wait "$LOCAL" "$REMOTE"'     # katbackup config.toml
+EOF
+}
 
 exe="$WIN_DIR/katcmp-gui.exe"
 gui=1
@@ -29,6 +45,12 @@ while :; do
 	--wait)
 		wait=1
 		shift
+		;;
+	-h | --help)
+		# After --tui, fall through so katcmp.exe prints its own help.
+		[ "$gui" = 0 ] && break
+		usage
+		exit 0
 		;;
 	*)
 		break

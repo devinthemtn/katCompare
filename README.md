@@ -50,7 +50,7 @@ katcmp-win --wait ./a ./b   # Windows GUI; returns when its window closes
 katcmp-win --tui ./a ./b    # Windows TUI in this terminal
 ```
 
-The wrapper converts path arguments to Windows paths. The plain GUI form returns immediately, so use `--wait` when another program runs `katcmp-win` as its diff tool (`git difftool`, katbackup's `diff_tool`): those delete their temporary files as soon as the command returns, before the GUI can read them. Use `task install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `task build-windows` / `task build-gui-windows` just build them (output goes to `build/`).
+The wrapper converts path arguments to Windows paths. The plain GUI form returns immediately, so use `--wait` when another program runs `katcmp-win` as its diff tool (`git difftool`, katbackup's `diff_tool`): those delete their temporary files as soon as the command returns, before the GUI can read them (see [Using katCompare as a diff tool](#using-katcompare-as-a-diff-tool-wsl)). `katcmp-win --help` lists the options. Use `task install WSL=` to skip the Windows builds, or `WIN_INSTALL_DIR=/mnt/c/...` to install them somewhere else. `task build-windows` / `task build-gui-windows` just build them (output goes to `build/`).
 
 ### Desktop GUI
 
@@ -323,6 +323,23 @@ The **TUI prefers terminal tools** (vimdiff, nvimdiff, or a custom `difftool.<na
 - **Plain files and folders** don't need to be in a git repository. Files are passed to `git difftool --no-index`, which works anywhere. If git isn't installed or no tool is configured, the app launches the tool directly: a `difftool.<name>.cmd` you've defined, or the first of meld / kdiff3 / VS Code it finds (nvim/vim `-d` too, but only in the TUI). A file that exists on only one side is compared against an empty file.
 - **Whole folders** open directly in tools that support directories (meld, kdiff3, Beyond Compare).
 - **Merge conflicts**: in git mode (ref vs working tree), files with unresolved conflicts during a merge or rebase are marked ⚠. Resolve them in the built-in conflict view (GUI **Conflicts**, TUI `m`), or with **Merge tool** / `R`, which runs `git mergetool -- <file>` and then reloads the list.
+
+### Using katCompare as a diff tool (WSL)
+
+To have another program open its comparisons in the Windows GUI, run `katcmp-win --wait`:
+
+```bash
+# git difftool
+git config --global diff.tool katcmp
+git config --global difftool.katcmp.cmd 'katcmp-win --wait "$LOCAL" "$REMOTE"'
+```
+
+```toml
+# katbackup: ~/.config/katbackup/config.toml
+diff_tool = 'katcmp-win --wait "$LOCAL" "$REMOTE"'
+```
+
+`--wait` keeps `katcmp-win` running until you close the window, and the calling program pauses until then. Without it, `katcmp-win` returns immediately and the calling program deletes its temporary files, so the GUI stays on "Nothing loaded yet" and the status bar reports that a path can't be found.
 
 ## Color Legend
 

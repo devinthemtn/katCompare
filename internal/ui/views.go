@@ -672,6 +672,9 @@ External Tools:
                    (a terminal $VISUAL/$EDITOR is preferred over a GUI one here)
   Diff/merge tool  git config diff.tool / merge.tool (e.g. meld, kdiff3, nvimdiff)
                    terminal tools (nvimdiff, emacsclient -nw, ...) are preferred here
+  As a diff tool   Under WSL, other programs should run: katcmp-win --wait
+                   (keeps their temporary files until the GUI window closes;
+                   see katcmp-win --help)
 
 Config Files:
   katcmp has no config file of its own; tools are read from git config:
