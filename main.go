@@ -109,6 +109,10 @@ Examples:
   %s --git HEAD~1              # Previous commit vs working tree
   %s --git HEAD~3 HEAD         # Three commits ago vs current HEAD
 
+WSL:
+  katcmp-win runs the Windows build from WSL; see katcmp-win --help. Use
+  katcmp-win --wait when another program runs it as a diff tool.
+
 Interactive Controls:
   Tab              Switch between input fields / Navigate suggestions
   Enter            Load entered path / Accept suggestion
