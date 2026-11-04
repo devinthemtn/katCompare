@@ -263,3 +263,19 @@ func plural(n int) string {
 	}
 	return "s"
 }
+
+// WithPaths adds paths that statuses doesn't list, as modified. It keeps the
+// row of a file saved this session once git no longer lists it, so a merge
+// that removes a file's last difference doesn't remove its row.
+func WithPaths(statuses []FileStatus, paths []string) []FileStatus {
+	listed := make(map[string]bool, len(statuses))
+	for _, fs := range statuses {
+		listed[fs.Path] = true
+	}
+	for _, path := range paths {
+		if !listed[path] {
+			statuses = append(statuses, FileStatus{Path: path, Status: 'M'})
+		}
+	}
+	return statuses
+}

@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"katcompare/internal/conflict"
 	"katcompare/internal/external"
 	"katcompare/internal/git"
+	"katcompare/internal/merge"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,14 +18,12 @@ import (
 // selected working-tree file block by block: ours, theirs or both.
 
 var (
-	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#34D399")).
-			Bold(true)
-	conflictOursStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
-	conflictTheirsStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA"))
-	conflictResultStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#34D399"))
+	statusStyle         = lipgloss.NewStyle().Foreground(greenColor).Bold(true)
+	conflictOursStyle   = lipgloss.NewStyle().Foreground(redColor)
+	conflictTheirsStyle = lipgloss.NewStyle().Foreground(blueColor)
+	conflictResultStyle = lipgloss.NewStyle().Foreground(greenColor)
 	conflictLabelStyle  = lipgloss.NewStyle().Bold(true)
-	conflictStateStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Bold(true)
+	conflictStateStyle  = lipgloss.NewStyle().Foreground(yellowColor).Bold(true)
 )
 
 var choiceNames = map[conflict.Choice]string{
@@ -76,15 +74,14 @@ func (m *Model) saveConflicts(mark bool) {
 		return
 	}
 	path := m.conflictPath()
-	info, err := os.Stat(path)
+	report, err := merge.SaveVerified(path, m.conflictFile.Render(m.conflictChoices))
 	if err != nil {
-		m.errorMsg = err.Error()
-		return
-	}
-	if err := os.WriteFile(path, []byte(m.conflictFile.Render(m.conflictChoices)), info.Mode().Perm()); err != nil {
 		m.errorMsg = "Failed to save: " + err.Error()
 		return
 	}
+	m.tracker.Record(path, &merge.Record{Report: report, Kind: merge.KindConflicts})
+	m.statusWarn = false
+	issues := issueSuffix(report)
 	if mark {
 		if err := git.MarkResolved(m.gitRoot, m.selectedFile); err != nil {
 			m.errorMsg = err.Error()
@@ -92,7 +89,8 @@ func (m *Model) saveConflicts(mark bool) {
 		}
 		m.viewMode = ViewModeDiff
 		m.reloadComparison()
-		m.statusMsg = fmt.Sprintf("Resolved %s and staged it (git add)", m.selectedFile)
+		m.statusMsg = fmt.Sprintf("Resolved %s and staged it (git add).%s", m.selectedFile, issues)
+		m.statusWarn = issues != ""
 		return
 	}
 	m.reloadComparison()
@@ -101,10 +99,11 @@ func (m *Model) saveConflicts(mark bool) {
 		return
 	}
 	if remaining > 0 {
-		m.statusMsg = fmt.Sprintf("Saved — %d conflict(s) left", remaining)
+		m.statusMsg = fmt.Sprintf("Saved, %s left.%s", plural(remaining, "conflict"), issues)
 	} else {
-		m.statusMsg = "Saved — no conflicts left; press A to mark it resolved"
+		m.statusMsg = "Saved, no conflicts left. Press A to mark it resolved." + issues
 	}
+	m.statusWarn = issues != ""
 }
 
 // chooseConflict sets the focused block's choice and, unless undoing, moves
@@ -126,13 +125,14 @@ func (m *Model) chooseConflict(c conflict.Choice) {
 }
 
 func (m *Model) handleConflictKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.errorMsg, m.statusMsg = "", ""
+	m.clearMessages()
 	n := len(m.conflictChoices)
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "esc":
 		m.viewMode = ViewModeDiff
+		m.ensureDiffLoaded()
 	case "down", "j", "]":
 		if m.conflictIdx < n-1 {
 			m.conflictIdx++
@@ -151,6 +151,10 @@ func (m *Model) handleConflictKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.chooseConflict(conflict.TheirsThenOurs)
 	case "u":
 		m.chooseConflict(conflict.Unresolved)
+	case "U":
+		for i := range m.conflictChoices {
+			m.conflictChoices[i] = conflict.Unresolved
+		}
 	case "O", "T":
 		c := conflict.Ours
 		if msg.String() == "T" {
@@ -176,8 +180,8 @@ func (m *Model) handleConflictKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, runExternal("edit", cmd)
 	case "R":
 		return m, m.resolveConflict()
-	case "?":
-		m.viewMode = ViewModeHelp
+	case "?", "f1":
+		m.openHelp()
 	}
 	return m, nil
 }
@@ -198,98 +202,73 @@ func (m *Model) afterExternalInConflictView() {
 	}
 }
 
-func (m *Model) renderConflictView() string {
-	var b strings.Builder
+// renderConflictPane returns the title and lines of the conflict pane.
+func (m *Model) renderConflictPane(w, h int) (string, []string) {
 	f := m.conflictFile
 	n := len(f.Blocks)
 	resolved := n - conflict.Remaining(n, m.conflictChoices)
+	title := fmt.Sprintf("Resolve conflicts · %s  [%d/%d resolved]", sanitizeLine(m.selectedFile), resolved, n)
 
-	header := fmt.Sprintf("Resolve conflicts — %s  [%d/%d resolved]", m.selectedFile, resolved, n)
-	b.WriteString(mergeHeaderStyle.Width(m.windowWidth).Render(header))
-	b.WriteString("\n\n")
-	used := 3
-
-	if m.errorMsg != "" {
-		b.WriteString(errorStyle.Render(m.errorMsg) + "\n\n")
-		used += 2
-	} else if m.statusMsg != "" {
-		b.WriteString(statusStyle.Render(m.statusMsg) + "\n\n")
-		used += 2
+	var lines []string
+	if banner := m.renderStatusBanner(w); banner != "" {
+		lines = append(lines, banner)
 	}
-
 	if n == 0 {
-		b.WriteString("No conflict markers left in this file, but git still lists it as conflicted.\n")
-		b.WriteString("Press A to mark it resolved (git add), or Esc to go back.\n\n")
-	} else {
-		// Block list (a window around the focused block)
-		listMax := min(n, 6)
-		start := max(0, min(m.conflictIdx-listMax/2, n-listMax))
-		for i := start; i < start+listMax; i++ {
-			blk := f.Blocks[i]
-			cursor := "  "
-			if i == m.conflictIdx {
-				cursor = "▶ "
-			}
-			state := conflictStateStyle.Render("unresolved")
-			if c := m.conflictChoices[i]; c != conflict.Unresolved {
-				state = statusStyle.Render(choiceNames[c])
-			}
-			line := fmt.Sprintf("%s#%d  line %d  ours %d / theirs %d lines  ", cursor, i+1, blk.StartLine, len(blk.Ours), len(blk.Theirs))
-			b.WriteString(line + state + "\n")
+		return title, append(lines,
+			" No conflict markers left, but git still lists this file as conflicted.",
+			" Press A to mark it resolved (git add), or Esc to go back.")
+	}
+
+	// Block list (a window around the focused block)
+	listMax := min(n, max(1, h/3))
+	start := max(0, min(m.conflictIdx-listMax/2, n-listMax))
+	for i := start; i < start+listMax; i++ {
+		blk := f.Blocks[i]
+		cursor := "  "
+		if i == m.conflictIdx {
+			cursor = "▶ "
 		}
-		b.WriteString("\n")
-		used += listMax + 1
-
-		// Focused block in detail
-		avail := max(6, m.windowHeight-used-3)
-		b.WriteString(m.renderConflictDetail(m.conflictIdx, avail))
+		state := conflictStateStyle.Render("unresolved")
+		if c := m.conflictChoices[i]; c != conflict.Unresolved {
+			state = statusStyle.Render(choiceNames[c])
+		}
+		lines = append(lines, fmt.Sprintf("%s#%d  line %d  ours %d / theirs %d lines  ", cursor, i+1, blk.StartLine, len(blk.Ours), len(blk.Theirs))+state)
 	}
+	lines = append(lines, "")
 
-	b.WriteString("\n")
-	var help string
-	switch {
-	case m.windowWidth > 140:
-		help = "j/k ]/[: Conflict • o: Ours • t: Theirs • b/B: Both • u: Undo • O/T: All ours/theirs • s: Save • A: Save & mark resolved • e: Edit • R: Merge tool • Esc: Back"
-	case m.windowWidth > 60:
-		help = "j/k: Move • o/t/b/B: Ours/Theirs/Both • u: Undo • s: Save • A: Resolve • Esc: Back"
-	default:
-		help = "o/t/b:Pick u:Undo s:Save A:Resolve Esc:Back"
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth).Render(help))
-	return b.String()
+	// Focused block in detail
+	return title, append(lines, m.renderConflictDetail(m.conflictIdx, w, max(3, h-len(lines)))...)
 }
 
 // renderConflictDetail shows block i: context, then either both sides or the
 // chosen result, within at most maxLines lines.
-func (m *Model) renderConflictDetail(i, maxLines int) string {
+func (m *Model) renderConflictDetail(i, width, maxLines int) []string {
 	f := m.conflictFile
 	blk := f.Blocks[i]
-	width := max(20, m.windowWidth-4)
 	var out []string
 	add := func(style lipgloss.Style, prefix string, lines []string) {
 		for _, l := range lines {
-			l = strings.ReplaceAll(l, "\t", "    ")
-			if len(l) > width-2 {
-				l = l[:width-5] + "..."
-			}
-			out = append(out, style.Render(prefix+l))
+			out = append(out, style.Render(truncate(prefix+sanitizeLine(l), width)))
 		}
+	}
+	label := func(text string) {
+		out = append(out, conflictLabelStyle.Render(truncate(sanitizeLine(text), width)))
 	}
 	before, after := f.Context(i, 2)
 	add(equalLineStyle, "  ", before)
 	if c := m.conflictChoices[i]; c != conflict.Unresolved {
-		out = append(out, conflictLabelStyle.Render("── Result: "+choiceNames[c]+" ──"))
+		label("── Result: " + choiceNames[c] + " ──")
 		add(conflictResultStyle, "  ", blk.Lines(c))
 	} else {
-		out = append(out, conflictLabelStyle.Render("── Ours ("+blk.OursLabel+") ──"))
+		label("── Ours (" + blk.OursLabel + ") ──")
 		add(conflictOursStyle, "  ", blk.Ours)
-		out = append(out, conflictLabelStyle.Render("── Theirs ("+blk.TheirsLabel+") ──"))
+		label("── Theirs (" + blk.TheirsLabel + ") ──")
 		add(conflictTheirsStyle, "  ", blk.Theirs)
 	}
 	add(equalLineStyle, "  ", after)
 	if len(out) > maxLines {
 		hidden := len(out) - maxLines + 1
-		out = append(out[:maxLines-1], helpStyle.Render(fmt.Sprintf("  … %d more line(s) — press e to open in your editor", hidden)))
+		out = append(out[:maxLines-1], helpStyle.Render(truncate(fmt.Sprintf("  … %d more line(s). Press e to open your editor", hidden), width)))
 	}
-	return strings.Join(out, "\n") + "\n"
+	return out
 }

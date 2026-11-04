@@ -10,6 +10,7 @@ import (
 	"katcompare/internal/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // version is set at build time with -ldflags "-X main.version=v1.2.3".
@@ -49,9 +50,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		model.ShowFileList()
 	} else {
 		if len(args) >= 1 {
 			model.SetLeftPath(args[0])
+			model.FocusRightPath()
 		}
 		if len(args) >= 2 {
 			model.SetRightPath(args[1])
@@ -59,8 +62,12 @@ func main() {
 		}
 	}
 
+	// Adaptive colors ask the terminal for its background once. Do that now, as
+	// the answer would otherwise arrive as key presses while the program runs.
+	lipgloss.HasDarkBackground()
+
 	// Create the program
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithReportFocus())
 
 	// Run the program
 	if _, err := p.Run(); err != nil {
@@ -113,24 +120,19 @@ WSL:
   katcmp-win runs the Windows build from WSL; see katcmp-win --help. Use
   katcmp-win --wait when another program runs it as a diff tool.
 
-Interactive Controls:
-  Tab              Switch between input fields / Navigate suggestions
-  Enter            Load entered path / Accept suggestion
-  ↑/↓              Navigate file list / Navigate suggestions
-  /                Filter file list by name
-  Esc              Clear suggestions / filter
-  Ctrl+D           Start diff comparison
+Getting around (press ? in the app for every key):
+  j/k or ↑/↓       Move through the files or the diff
+  Enter or Tab     Open the selected file's diff
+  Tab or Esc       Back to the file list
+  ]/[              Next/previous change
   s                Switch view (Unified / Side-by-Side)
-  h/l or ←/→       Horizontal scroll in side-by-side view
-  j/k              Navigate diff (vim-style)
-  n/p              Next/previous file
-  g/G              Go to top/bottom
-  ]/[              Jump to next/previous change
-  m                Enter merge mode (on a git conflict: resolve conflicts)
-  R                Resolve a git conflict in your merge tool
-  Esc              Go back
-  ?                Show help
-  Q/Ctrl+C         Quit
+  m                Merge (on a git conflict: resolve it)
+  /                Filter the file list by name
+  c                Copy files that exist on only one side
+  r / x            Reload / swap left and right
+  o / Ctrl+G       Change the paths / compare git refs
+  ?                Help (F1 on the open screen)
+  q / Ctrl+C       Quit (Ctrl+C on the open screen, where q types a q)
 
 Colors:
   Blue background:  Added lines (+)

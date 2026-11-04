@@ -10,24 +10,42 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// keyMsg builds the key message for a name: a special key, or typed text.
+func keyMsg(k string) tea.KeyMsg {
+	special := map[string]tea.KeyType{
+		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "tab": tea.KeyTab, "shift+tab": tea.KeyShiftTab,
+		"backspace": tea.KeyBackspace, "up": tea.KeyUp, "down": tea.KeyDown,
+		"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown, "f1": tea.KeyF1,
+		"ctrl+d": tea.KeyCtrlD, "ctrl+g": tea.KeyCtrlG, "ctrl+c": tea.KeyCtrlC,
+	}
+	if ty, ok := special[k]; ok {
+		return tea.KeyMsg{Type: ty}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+}
+
+// settle runs cmd and feeds what it produces back into m.
+func settle(m *Model, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch out := cmd().(type) {
+	case nil:
+	case tea.BatchMsg:
+		for _, c := range out {
+			settle(m, c)
+		}
+	default:
+		_, next := m.Update(out)
+		settle(m, next)
+	}
+}
+
 func press(t *testing.T, m *Model, keys ...string) {
 	t.Helper()
 	for _, k := range keys {
-		var msg tea.KeyMsg
-		switch k {
-		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
-		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
-		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
-		}
-		_, cmd := m.Update(msg)
-		if cmd != nil {
-			if out := cmd(); out != nil {
-				m.Update(out)
-			}
-		}
+		_, cmd := m.Update(keyMsg(k))
+		settle(m, cmd)
 	}
 }
 

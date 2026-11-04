@@ -1,0 +1,754 @@
+package ui
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"katcompare/internal/differ"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// writeTree writes files (relative path -> content) under dir.
+func writeTree(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for rel, content := range files {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// longFile has its only change far below the first screen.
+func longFile(changeAt int, changed string) string {
+	var b strings.Builder
+	for i := 1; i <= 80; i++ {
+		if i == changeAt && changed != "" {
+			b.WriteString(changed + "\n")
+			continue
+		}
+		b.WriteString("line\n")
+	}
+	return b.String()
+}
+
+// browseDirs opens a directory comparison the way "katcmp left right" does.
+func browseDirs(t *testing.T, width, height int) (m *Model, left, right string) {
+	t.Helper()
+	dir := t.TempDir()
+	left, right = filepath.Join(dir, "left"), filepath.Join(dir, "right")
+	writeTree(t, left, map[string]string{
+		"long.txt":     longFile(60, ""),
+		"onlyleft.txt": "only left\n",
+		"same.txt":     "same\n",
+		"uni.txt":      "a\nold\nb\n",
+	})
+	writeTree(t, right, map[string]string{
+		"long.txt":      longFile(60, "CHANGED"),
+		"onlyright.txt": "only right\n",
+		"same.txt":      "same\n",
+		"uni.txt":       "a\nnew\nb\n",
+	})
+	m = New()
+	m.windowWidth, m.windowHeight = width, height
+	m.SetLeftPath(left)
+	m.SetRightPath(right)
+	m.OpenDiffIfFiles()
+	return m, left, right
+}
+
+func TestStartsOnOpenScreen(t *testing.T) {
+	m := New()
+	if m.viewMode != ViewModeOpen {
+		t.Errorf("view = %v, want the open screen", m.viewMode)
+	}
+}
+
+func TestDirectoriesOpenInFilesPane(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	if m.viewMode != ViewModeFileSelect {
+		t.Fatalf("view = %v, want the files pane", m.viewMode)
+	}
+	view := m.View()
+	for _, want := range []string{"Files", "long.txt", "CHANGED"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("two-pane view is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestNarrowTerminalShowsOnePane(t *testing.T) {
+	m, _, _ := browseDirs(t, 80, 24)
+	if view := m.View(); !strings.Contains(view, "long.txt") || strings.Contains(view, "CHANGED") {
+		t.Errorf("narrow files pane should show only the list:\n%s", view)
+	}
+	press(t, m, "enter")
+	if view := m.View(); !strings.Contains(view, "CHANGED") || strings.Contains(view, "same.txt") {
+		t.Errorf("narrow diff pane should show only the diff:\n%s", view)
+	}
+	press(t, m, "esc")
+	if m.viewMode != ViewModeFileSelect {
+		t.Errorf("esc: view = %v, want the files pane", m.viewMode)
+	}
+}
+
+func TestTextFieldsTakeAllText(t *testing.T) {
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 34
+
+	_, cmd := m.Update(keyMsg("q"))
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("typing q in a path field quit the app")
+		}
+	}
+	press(t, m, "?")
+	if m.viewMode != ViewModeOpen || m.inputLeft != "q?" {
+		t.Errorf("view=%v input=%q, want q? typed into the field", m.viewMode, m.inputLeft)
+	}
+
+	// A paste arrives as one message, bracketed or not.
+	m.inputLeft = ""
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/tmp/pasted path\n"), Paste: true})
+	if m.inputLeft != "/tmp/pasted path" {
+		t.Errorf("paste: input = %q", m.inputLeft)
+	}
+	m.inputLeft = ""
+	press(t, m, "/tmp/burst")
+	if m.inputLeft != "/tmp/burst" {
+		t.Errorf("burst: input = %q", m.inputLeft)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+	if m.inputLeft != "/tmp/burst " {
+		t.Errorf("space: input = %q", m.inputLeft)
+	}
+
+	// Backspace removes a whole character, not a byte.
+	m.inputLeft = "né"
+	press(t, m, "backspace")
+	if m.inputLeft != "n" {
+		t.Errorf("backspace: input = %q", m.inputLeft)
+	}
+
+	press(t, m, "f1")
+	if m.viewMode != ViewModeHelp {
+		t.Errorf("f1: view = %v, want help", m.viewMode)
+	}
+	press(t, m, "esc")
+	if m.viewMode != ViewModeOpen {
+		t.Errorf("leaving help: view = %v, want the open screen back", m.viewMode)
+	}
+}
+
+func TestOpenScreenCompares(t *testing.T) {
+	dir := t.TempDir()
+	left, right := filepath.Join(dir, "l"), filepath.Join(dir, "r")
+	writeTree(t, left, map[string]string{"f.txt": "a\n"})
+	writeTree(t, right, map[string]string{"f.txt": "b\n"})
+
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 34
+	press(t, m, left, "esc", "enter") // esc: dismiss suggestions; enter: on to the right field
+	if m.focus != focusInputRight {
+		t.Fatalf("focus = %v, want the right field", m.focus)
+	}
+	press(t, m, right, "esc", "enter")
+	if m.viewMode != ViewModeFileSelect || m.selectedFile != "f.txt" {
+		t.Fatalf("view=%v selected=%q err=%q, want the file list", m.viewMode, m.selectedFile, m.errorMsg)
+	}
+
+	// A bad path says so and stays on the open screen.
+	press(t, m, "o")
+	if m.viewMode != ViewModeOpen {
+		t.Fatalf("o: view = %v", m.viewMode)
+	}
+	m.inputRight = filepath.Join(dir, "missing")
+	m.clearSuggestions()
+	press(t, m, "enter")
+	if m.viewMode != ViewModeOpen || m.errorMsg == "" {
+		t.Errorf("bad path: view=%v err=%q", m.viewMode, m.errorMsg)
+	}
+
+	// A single-candidate Tab completes rather than cycling on the spot.
+	m.focus, m.inputLeft = focusInputLeft, left[:len(left)-1]+"l"
+	m.updateSuggestions()
+	press(t, m, "tab")
+	if m.showSuggestions {
+		t.Error("Tab with one suggestion should accept it and close the list")
+	}
+}
+
+func TestFilterKeepsSelectionInside(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	press(t, m, "/", "uni")
+	if m.selectedFile != "uni.txt" {
+		t.Fatalf("selected = %q, want the only match", m.selectedFile)
+	}
+	press(t, m, "enter", "enter") // finish typing, then open
+	if m.viewMode != ViewModeDiff || !strings.Contains(m.currentDiff.LeftFile, "uni.txt") {
+		t.Fatalf("view=%v diff=%v", m.viewMode, m.currentDiff)
+	}
+	press(t, m, "n")
+	if m.selectedFile != "uni.txt" {
+		t.Errorf("n left the filter: selected = %q", m.selectedFile)
+	}
+	press(t, m, "esc", "esc") // back to files, clear the filter
+	if len(m.getSortedFiles()) != 5 {
+		t.Errorf("after clearing: %d files", len(m.getSortedFiles()))
+	}
+
+	press(t, m, "/", "nomatch")
+	if m.selectedFile != "" || !strings.Contains(m.View(), "No files match") {
+		t.Errorf("no match: selected=%q\n%s", m.selectedFile, m.View())
+	}
+	press(t, m, "esc")
+	if m.selectedFile == "" {
+		t.Error("clearing the filter should select a file again")
+	}
+}
+
+func TestOpensOnFirstChange(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	m.selectedFile = "long.txt"
+	press(t, m, "enter")
+	if m.viewMode != ViewModeDiff || m.currentDiff.Lines[m.cursor].Type == differ.DiffEqual {
+		t.Fatalf("view=%v cursor=%d, want on the first change", m.viewMode, m.cursor)
+	}
+	if !strings.Contains(m.View(), "CHANGED") {
+		t.Errorf("first change is off-screen:\n%s", m.View())
+	}
+	press(t, m, "m")
+	if m.viewMode != ViewModeMerge || m.currentDiff.Lines[m.cursor].Type == differ.DiffEqual {
+		t.Fatalf("merge: view=%v cursor=%d, want on the first change", m.viewMode, m.cursor)
+	}
+}
+
+func TestKeysArrivingTogether(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	m.selectedFile = "uni.txt"
+	m.loadDiff()
+	press(t, m, "m")
+	if m.viewMode != ViewModeMerge {
+		t.Fatalf("view = %v", m.viewMode)
+	}
+	press(t, m, "n", "a") // ordinary keys still work in merge
+
+	m, _, _ = browseDirs(t, 120, 34)
+	press(t, m, "jj") // two presses delivered as one message
+	if m.selectedFile != "onlyright.txt" {
+		t.Errorf("selected = %q, want two rows down", m.selectedFile)
+	}
+	press(t, m, "/", "uni") // a text field keeps them together
+	if m.filterQuery != "uni" {
+		t.Errorf("filter = %q", m.filterQuery)
+	}
+}
+
+func TestLargeFilesDiffInTheBackground(t *testing.T) {
+	big := strings.Repeat("a line of text in a big file\n", 8000)
+	dir := t.TempDir()
+	left, right := filepath.Join(dir, "l"), filepath.Join(dir, "r")
+	writeTree(t, left, map[string]string{"a.txt": "a\n", "big.txt": big + "old\n"})
+	writeTree(t, right, map[string]string{"a.txt": "b\n", "big.txt": big + "new\n"})
+
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 34
+	m.SetLeftPath(left)
+	m.SetRightPath(right)
+	m.OpenDiffIfFiles()
+
+	// Moving onto it doesn't diff it during the key press.
+	_, cmd := m.Update(keyMsg("j"))
+	if cmd == nil || m.diffFile == "big.txt" {
+		t.Fatalf("cmd=%v diffFile=%q, want the diff left for later", cmd != nil, m.diffFile)
+	}
+	if !strings.Contains(m.View(), "Loading") {
+		t.Errorf("pane should say it's loading:\n%s", m.View())
+	}
+
+	// A result computed before a reload is dropped, not shown.
+	stale := diffReadyMsg{relPath: "big.txt", gen: m.diffGen - 1, cached: &cachedDiff{}}
+	m.Update(stale)
+	if m.diffFile == "big.txt" {
+		t.Error("a stale result was used")
+	}
+
+	settle(m, cmd)
+	if m.diffFile != "big.txt" || !strings.Contains(m.View(), "new") {
+		t.Errorf("diffFile=%q\n%s", m.diffFile, m.View())
+	}
+
+	// Moving away first: the result is kept, but stays out of the pane.
+	press(t, m, "k")
+	if m.diffFile != "a.txt" {
+		t.Errorf("diffFile = %q", m.diffFile)
+	}
+}
+
+func TestUntickedLinesStayReadable(t *testing.T) {
+	for name, style := range map[string]lipgloss.Style{"insert": unselectedInsertStyle, "delete": unselectedDeleteStyle} {
+		if style.GetFaint() || style.GetStrikethrough() {
+			t.Errorf("unticked %s is faint or struck through", name)
+		}
+	}
+	m, _, _ := browseDirs(t, 120, 34)
+	m.selectedFile = "uni.txt"
+	press(t, m, "enter", "m", "n")
+	if view := m.View(); !strings.Contains(view, "[ ]") || !strings.Contains(view, "old") || !strings.Contains(view, "new") {
+		t.Errorf("unticked lines should still show their text:\n%s", view)
+	}
+}
+
+func TestTabSwitchesPanes(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	press(t, m, "tab")
+	if m.viewMode != ViewModeDiff {
+		t.Fatalf("tab from files: view = %v", m.viewMode)
+	}
+	press(t, m, "tab")
+	if m.viewMode != ViewModeFileSelect {
+		t.Fatalf("tab from diff: view = %v", m.viewMode)
+	}
+}
+
+func TestSelectionUpdatesDiffPane(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	for i := 0; i < 10 && m.selectedFile != "uni.txt"; i++ {
+		press(t, m, "j")
+	}
+	if view := m.View(); !strings.Contains(view, "new") {
+		t.Errorf("diff pane didn't follow the selection:\n%s", view)
+	}
+}
+
+func TestMergeStatusAndBackupHidden(t *testing.T) {
+	m, left, right := browseDirs(t, 120, 34)
+	m.selectedFile = "uni.txt"
+	press(t, m, "enter", "m")
+
+	if view := m.View(); !strings.Contains(view, "Unsaved") || !strings.Contains(view, "adds 1 line and removes 1 line in uni.txt") {
+		t.Errorf("merge view should say what saving does:\n%s", view)
+	}
+	press(t, m, "s")
+	if got := readFile(t, filepath.Join(left, "uni.txt")); got != readFile(t, filepath.Join(right, "uni.txt")) {
+		t.Fatalf("left = %q", got)
+	}
+	if got := readFile(t, filepath.Join(left, "uni.txt.orig")); got != "a\nold\nb\n" {
+		t.Errorf("backup = %q", got)
+	}
+	if _, listed := m.allFiles["uni.txt.orig"]; listed {
+		t.Error("the backup is listed as a file")
+	}
+	view := m.View()
+	for _, want := range []string{"◆", "safe", "Merged safely to uni.txt", "Saved · matches disk"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("after save, view is missing %q:\n%s", want, view)
+		}
+	}
+	if m.viewMode != ViewModeMerge || m.mergeTarget != "left" {
+		t.Errorf("after save: view=%v target=%q", m.viewMode, m.mergeTarget)
+	}
+
+	// An outside edit ends the status and shows the backup again on reload.
+	writeTree(t, left, map[string]string{"uni.txt": "edited\n"})
+	press(t, m, "r")
+	if strings.Contains(m.View(), "Merged safely") {
+		t.Errorf("status should clear after an outside edit:\n%s", m.View())
+	}
+	if _, listed := m.allFiles["uni.txt.orig"]; !listed {
+		t.Error("the backup should be listed once its save is forgotten")
+	}
+}
+
+func TestSaveWarnsAboutOutsideEdits(t *testing.T) {
+	m, left, _ := browseDirs(t, 120, 34)
+	path := filepath.Join(left, "uni.txt")
+	m.selectedFile = "uni.txt"
+	press(t, m, "enter", "m")
+
+	writeTree(t, left, map[string]string{"uni.txt": "outside edit\n"})
+	press(t, m, "s")
+	if got := readFile(t, path); got != "outside edit\n" {
+		t.Fatalf("first s overwrote the outside edit: %q", got)
+	}
+	if view := m.View(); !strings.Contains(view, "Changed on disk") || !strings.Contains(m.errorMsg, "again") {
+		t.Fatalf("no warning: err=%q\n%s", m.errorMsg, view)
+	}
+
+	// Any other key cancels the overwrite.
+	press(t, m, "j", "s")
+	if got := readFile(t, path); got != "outside edit\n" {
+		t.Fatalf("s after another key overwrote the edit: %q", got)
+	}
+
+	press(t, m, "s")
+	if got := readFile(t, path); got == "outside edit\n" {
+		t.Fatal("second s should overwrite")
+	}
+	if got := readFile(t, path+".orig"); got != "outside edit\n" {
+		t.Errorf("backup = %q, want the outside edit", got)
+	}
+
+	// With nothing checked there's nothing to save.
+	press(t, m, "n", "s")
+	if !strings.Contains(m.errorMsg, "No changes") {
+		t.Errorf("nothing checked: err = %q", m.errorMsg)
+	}
+}
+
+func TestSaveRefusedWhenTargetMissing(t *testing.T) {
+	m, left, _ := browseDirs(t, 120, 34)
+	m.selectedFile = "uni.txt"
+	press(t, m, "enter", "m")
+	if err := os.Remove(filepath.Join(left, "uni.txt")); err != nil {
+		t.Fatal(err)
+	}
+	press(t, m, "s")
+	if !strings.Contains(m.errorMsg, "no longer exists") {
+		t.Errorf("err = %q", m.errorMsg)
+	}
+	if _, err := os.Stat(filepath.Join(left, "uni.txt")); err == nil {
+		t.Error("save recreated a deleted file")
+	}
+}
+
+func TestConflictSaveKeepsBackupAndStatus(t *testing.T) {
+	dir := conflictRepo(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "f.txt")
+	before := readFile(t, path)
+
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 40
+	if err := m.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	m.ShowFileList()
+	m.selectedFile = "f.txt"
+	press(t, m, "enter", "m")
+	if m.viewMode != ViewModeConflict {
+		t.Fatalf("view = %v", m.viewMode)
+	}
+
+	press(t, m, "o", "s") // partial save
+	if got := readFile(t, path+".orig"); got != before {
+		t.Errorf("no backup of the conflicted file: %q", got)
+	}
+	if !strings.Contains(m.statusMsg+m.errorMsg, "conflict marker") {
+		t.Errorf("partial save should warn: status=%q err=%q", m.statusMsg, m.errorMsg)
+	}
+	if !strings.Contains(m.View(), "Check this merge") {
+		t.Errorf("no check banner:\n%s", m.View())
+	}
+
+	// U resets every choice.
+	press(t, m, "O", "U")
+	if view := m.View(); !strings.Contains(view, "0/1 resolved") {
+		t.Errorf("U: view:\n%s", view)
+	}
+
+	press(t, m, "O", "A")
+	if m.viewMode != ViewModeDiff || m.conflicts["f.txt"] {
+		t.Fatalf("after A: view=%v conflicts=%v err=%q", m.viewMode, m.conflicts, m.errorMsg)
+	}
+	if !strings.Contains(m.View(), "Merged safely") {
+		t.Errorf("no safe banner:\n%s", m.View())
+	}
+	if _, listed := m.allFiles["f.txt.orig"]; listed {
+		t.Error("the backup is listed as a file")
+	}
+}
+
+func TestMergingLastGitFileKeepsItsRow(t *testing.T) {
+	dir := conflictRepo(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 40
+	if err := m.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	m.ShowFileList()
+	m.selectedFile = "f.txt"
+	press(t, m, "enter", "m", "O", "A") // ours == HEAD, so git no longer lists it
+	if _, listed := m.allFiles["f.txt"]; !listed {
+		t.Fatalf("row gone after resolving the last difference (err=%q)", m.errorMsg)
+	}
+}
+
+func TestSwapAndReload(t *testing.T) {
+	m, left, right := browseDirs(t, 120, 34)
+	m.selectedFile = "uni.txt"
+	m.loadDiff()
+	press(t, m, "x")
+	if m.leftPath != right || m.rightPath != left || m.selectedFile != "uni.txt" {
+		t.Fatalf("swap: left=%q right=%q selected=%q", m.leftPath, m.rightPath, m.selectedFile)
+	}
+	if _, ok := m.allFiles["onlyright.txt"]; !ok || m.allFiles["onlyright.txt"].LeftFile == nil {
+		t.Error("onlyright.txt should now be on the left")
+	}
+
+	writeTree(t, right, map[string]string{"uni.txt": "reloaded\n"}) // right is now the left side
+	press(t, m, "r")
+	if !strings.Contains(m.statusMsg, "Reloaded") || !strings.Contains(m.View(), "reloaded") {
+		t.Errorf("reload: status=%q\n%s", m.statusMsg, m.View())
+	}
+}
+
+func TestSwapGit(t *testing.T) {
+	dir := conflictRepo(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 40
+	if err := m.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	m.ShowFileList()
+	press(t, m, "x")
+	if !strings.Contains(m.errorMsg, "working tree") || m.leftRef != "HEAD" {
+		t.Errorf("swap with the working tree: err=%q left=%q", m.errorMsg, m.leftRef)
+	}
+	press(t, m, "F")
+	if m.errorMsg == "" {
+		t.Error("F should explain it needs two directories")
+	}
+}
+
+func TestCopy(t *testing.T) {
+	m, left, right := browseDirs(t, 120, 34)
+	press(t, m, "c")
+	if m.viewMode != ViewModeCopy {
+		t.Fatalf("c: view = %v (input %q)", m.viewMode, m.inputLeft)
+	}
+	press(t, m, "s")
+	if m.viewMode != ViewModeFileSelect || !strings.Contains(m.statusMsg, "1 copied") {
+		t.Fatalf("after copy: view=%v status=%q err=%q", m.viewMode, m.statusMsg, m.errorMsg)
+	}
+	if got := readFile(t, filepath.Join(right, "onlyleft.txt")); got != "only left\n" {
+		t.Errorf("copied = %q", got)
+	}
+	if m.allFiles["onlyleft.txt"].Source != m.allFiles["same.txt"].Source {
+		t.Error("the list should show the copy once it's done")
+	}
+	if strings.Contains(m.View(), "Loading") {
+		t.Errorf("diff pane stuck after copying:\n%s", m.View())
+	}
+
+	// With only right-only files left, copying defaults to that direction.
+	press(t, m, "c")
+	if m.copyTarget != "to-left" {
+		t.Errorf("copy target = %q, want to-left", m.copyTarget)
+	}
+	press(t, m, "s")
+	if got := readFile(t, filepath.Join(left, "onlyright.txt")); got != "only right\n" {
+		t.Errorf("copied = %q", got)
+	}
+
+	press(t, m, "c")
+	if m.viewMode == ViewModeCopy || m.errorMsg == "" {
+		t.Errorf("nothing to copy: view=%v err=%q", m.viewMode, m.errorMsg)
+	}
+}
+
+func TestCopyRefusedInGitMode(t *testing.T) {
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	repo := conflictRepo(t)
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, repo, map[string]string{"added.txt": "new\n"})
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 40
+	if err := m.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	m.ShowFileList()
+	press(t, m, "c")
+	if m.viewMode == ViewModeCopy || m.errorMsg == "" {
+		t.Errorf("view=%v err=%q, want copy refused", m.viewMode, m.errorMsg)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "git:HEAD")); err == nil {
+		t.Error("copy wrote into a folder named git:HEAD")
+	}
+}
+
+func TestViewKeepsPositionWhenSwitching(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	m.selectedFile = "long.txt"
+	press(t, m, "enter")
+	press(t, m, "s")
+	if m.sbsRows[m.cursor].Type == 0 && m.sbsRows[m.cursor].RightContent == "line" {
+		t.Errorf("s lost the position: cursor=%d", m.cursor)
+	}
+	if !strings.Contains(m.View(), "CHANGED") {
+		t.Errorf("change scrolled away:\n%s", m.View())
+	}
+}
+
+func TestHostileContentCannotBreakTheScreen(t *testing.T) {
+	dir := t.TempDir()
+	left, right := filepath.Join(dir, "l.txt"), filepath.Join(dir, "r.txt")
+	writeTree(t, dir, map[string]string{
+		"l.txt": "a\r\n\x1b[31mred\ttab\x07\r\n",
+		"r.txt": "a\r\nb\xffbad\r\n",
+	})
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 34
+	m.SetLeftPath(left)
+	m.SetRightPath(right)
+	m.OpenDiffIfFiles()
+	view := m.View()
+	for _, bad := range []string{"\r", "\x07", "\t", "\x1b[31mred"} {
+		if strings.Contains(view, bad) {
+			t.Errorf("view contains %q:\n%q", bad, view)
+		}
+	}
+}
+
+// TestEveryViewFitsTheTerminal renders every screen at several sizes with long
+// paths, Unicode, wide characters, tabs and long lines.
+func TestEveryViewFitsTheTerminal(t *testing.T) {
+	long := strings.Repeat("a-very-long-directory-name/", 6)
+	wide := strings.Repeat("日本語のテキスト héllo\tワイド ", 30)
+
+	for _, size := range [][2]int{{60, 20}, {80, 24}, {100, 30}, {120, 34}, {200, 50}} {
+		w, h := size[0], size[1]
+
+		dir := t.TempDir()
+		left, right := filepath.Join(dir, long, "left"), filepath.Join(dir, long, "right")
+		name := strings.Repeat("ファイル-long-name-", 8) + ".txt"
+		writeTree(t, left, map[string]string{
+			name:           "a\n" + wide + "\nb\n",
+			"long.txt":     longFile(60, ""),
+			"onlyleft.txt": "x\n",
+		})
+		writeTree(t, right, map[string]string{
+			name:            "a\nCHANGED " + wide + "\nb\n",
+			"long.txt":      longFile(60, "CHANGED"),
+			"onlyright.txt": "y\n",
+		})
+
+		m := New()
+		m.windowWidth, m.windowHeight = w, h
+		check := func(view string) {
+			t.Helper()
+			out := m.View()
+			lines := strings.Split(out, "\n")
+			if len(lines) > h {
+				t.Errorf("%dx%d %s: %d lines tall:\n%s", w, h, view, len(lines), out)
+			}
+			for _, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Errorf("%dx%d %s: line %d wide: %q", w, h, view, got, line)
+				}
+			}
+		}
+
+		check("empty open")
+		m.inputLeft = left
+		m.updateSuggestions()
+		check("open with suggestions")
+		m.errorMsg = strings.Repeat("a long error ", 40)
+		check("open with error")
+		m.errorMsg = ""
+		m.clearSuggestions()
+
+		m.SetLeftPath(left)
+		m.SetRightPath(right)
+		m.OpenDiffIfFiles()
+		check("files")
+		press(t, m, "/", "long")
+		check("filter")
+		press(t, m, "esc")
+		press(t, m, "enter")
+		check("diff")
+		press(t, m, "l", "l", "s")
+		check("side by side")
+		press(t, m, "s", "n")
+		check("next file")
+		for i := 0; i < 10 && m.selectedFile != name; i++ {
+			press(t, m, "n")
+		}
+		check("wide diff")
+		press(t, m, "s")
+		check("wide side by side")
+		press(t, m, "s", "m")
+		check("merge")
+		press(t, m, "s")
+		check("after save")
+		press(t, m, "esc")
+		check("diff with banner")
+		press(t, m, "esc", "c")
+		check("copy")
+		press(t, m, "esc", "?")
+		check("help")
+		press(t, m, "G")
+		check("end of help")
+		press(t, m, "esc", "o")
+		check("open again")
+	}
+
+	// Conflicts and the git picker need a repo.
+	repo := conflictRepo(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range [][2]int{{60, 20}, {80, 24}, {120, 34}} {
+		w, h := size[0], size[1]
+		m := New()
+		m.windowWidth, m.windowHeight = w, h
+		if err := m.LoadGitComparison("HEAD", ""); err != nil {
+			t.Fatal(err)
+		}
+		m.selectedFile = "f.txt"
+		m.loadDiff()
+		m.viewMode = ViewModeFileSelect
+		for _, step := range []struct{ name, key string }{
+			{"files", ""}, {"diff", "enter"}, {"conflict", "m"}, {"chosen", "o"}, {"back", "esc"}, {"git picker", "ctrl+g"},
+		} {
+			if step.key != "" {
+				press(t, m, step.key)
+			}
+			out := m.View()
+			lines := strings.Split(out, "\n")
+			if len(lines) > h {
+				t.Errorf("%dx%d %s: %d lines tall:\n%s", w, h, step.name, len(lines), out)
+			}
+			for _, line := range lines {
+				if got := lipgloss.Width(line); got > w {
+					t.Errorf("%dx%d %s: line %d wide: %q", w, h, step.name, got, line)
+				}
+			}
+		}
+	}
+}
