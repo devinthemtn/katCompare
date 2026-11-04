@@ -322,11 +322,17 @@ func withTrailingNewline(old []byte, content string) string {
 	if content == "" || strings.HasSuffix(content, "\n") {
 		return content
 	}
-	if bytes.HasSuffix(old, []byte("\r\n")) {
-		return content + "\r\n"
-	}
+	// The differ splits lines on \n, so a last line from a CRLF file arrives
+	// with its \r still on: half of a line ending, not part of the text.
+	halfCRLF := strings.HasSuffix(content, "\r")
 	if bytes.HasSuffix(old, []byte("\n")) {
+		if !halfCRLF && bytes.HasSuffix(old, []byte("\r\n")) {
+			return content + "\r\n"
+		}
 		return content + "\n"
+	}
+	if halfCRLF && !bytes.HasSuffix(old, []byte("\r")) {
+		return strings.TrimSuffix(content, "\r")
 	}
 	return content
 }

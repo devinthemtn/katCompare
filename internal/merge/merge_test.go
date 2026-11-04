@@ -339,3 +339,57 @@ func TestSaveVerified(t *testing.T) {
 		t.Error("expected error for a missing file")
 	}
 }
+
+// Lines reach the save with any \r still on them, so a CRLF file's last line
+// must not gain a second \r. Changed lines keep the ending they came with; a
+// last line without one takes the target's, and a target with no trailing
+// newline stays that way.
+func TestSaveKeepsLineEndings(t *testing.T) {
+	cases := []struct {
+		name, target, other, want string
+	}{
+		{"LF", "alpha\nbeta\n", "alpha\nBETA\n", "alpha\nBETA\n"},
+		{"CRLF, last line differs", "alpha\r\nbeta\r\n", "alpha\r\nBETA\r\n", "alpha\r\nBETA\r\n"},
+		{"CRLF, middle line differs", "a\r\nb\r\nc\r\n", "a\r\nB\r\nc\r\n", "a\r\nB\r\nc\r\n"},
+		{"CRLF, blank last line", "a\r\n\r\n", "A\r\n\r\n", "A\r\n\r\n"},
+		{"CRLF, no trailing newline", "a\r\nb", "A\r\nb", "A\r\nb"},
+		{"last line taken from CRLF into LF", "a\nb\n", "a\nB\r\n", "a\nB\r\n"},
+		{"last line taken from LF into CRLF", "a\r\nb\r\n", "a\r\nB\n", "a\r\nB\r\n"},
+		{"last line taken from CRLF, target has no newline", "a\r\nb", "a\r\nB\r\n", "a\r\nB"},
+		{"target ends in a bare CR", "a\nb\r", "A\nb\r", "A\nb\r"},
+	}
+	for _, c := range cases {
+		for _, side := range []string{"left", "right"} {
+			t.Run(c.name+"/"+side, func(t *testing.T) {
+				path := t.TempDir() + "/f.txt"
+				if err := os.WriteFile(path, []byte(c.target), 0644); err != nil {
+					t.Fatal(err)
+				}
+
+				var result *MergeResult
+				if side == "left" {
+					diff := differ.New().CompareStrings("l", "r", c.target, c.other)
+					result = New().ApplyToLeft(diff, NewChangeSelection(diff))
+				} else {
+					diff := differ.New().CompareStrings("l", "r", c.other, c.target)
+					result = New().ApplyToRight(diff, NewChangeSelection(diff))
+				}
+
+				report, err := SaveVerified(path, result.Content)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, _ := os.ReadFile(path)
+				if string(got) != c.want {
+					t.Errorf("saved %q, want %q", got, c.want)
+				}
+				if len(report.Issues) != 0 {
+					t.Errorf("issues = %v", report.Issues)
+				}
+				if orig, _ := os.ReadFile(report.Backup); string(orig) != c.target {
+					t.Errorf("backup = %q, want %q", orig, c.target)
+				}
+			})
+		}
+	}
+}
