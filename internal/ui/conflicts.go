@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"katcompare/internal/conflict"
-	"katcompare/internal/external"
 	"katcompare/internal/git"
 	"katcompare/internal/merge"
 
@@ -172,7 +171,7 @@ func (m *Model) handleConflictKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if n > 0 {
 			line = m.conflictFile.Blocks[m.conflictIdx].StartLine
 		}
-		cmd, err := external.EditorCommand(m.conflictPath(), line, false)
+		cmd, err := m.editorCommand(m.conflictPath(), line)
 		if err != nil {
 			m.errorMsg = err.Error()
 			return m, nil

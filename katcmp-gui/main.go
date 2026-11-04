@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"katcompare/internal/config"
 	"katcompare/internal/git"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -36,6 +37,8 @@ func main() {
 	}
 
 	git.TrustWSLPaths()
+	// Without the file the app runs on the defaults, so a failure here isn't fatal.
+	config.Install() //nolint:errcheck
 
 	app := application.New(application.Options{
 		Name:        "katcmp-gui",

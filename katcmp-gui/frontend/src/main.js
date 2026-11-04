@@ -12,6 +12,7 @@ import {
     SelectFile,
     SuggestPaths,
     GetToolInfo,
+    GetSettings,
     GetVersion,
     OpenInEditor,
     OpenInDiffTool,
@@ -26,7 +27,27 @@ import { Events } from '@wailsio/runtime';
 // State
 // ---------------------------------------------------------------------------
 
+const LAYOUT_KEY = 'katcompare.layout';
+
+// loadLayout returns the collapse choices saved by an earlier run. Storage can
+// be missing or hold anything, so it only trusts real booleans.
+function loadLayout() {
+    let saved = {};
+    try {
+        saved = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {};
+    } catch {
+        // Fall back to everything showing.
+    }
+    return {
+        filesCollapsed: saved.filesCollapsed === true,
+        pathsCollapsed: saved.pathsCollapsed === true,
+        focus: saved.focus === true,
+    };
+}
+
 const state = {
+    layout: loadLayout(), // { filesCollapsed, pathsCollapsed, focus }; focus hides both without changing them
+    compareFailed: false, // the last Compare failed, so the paths bar stays open to fix it
     mode: 'paths', // 'paths' | 'git'
     comparison: null, // ComparisonResult from the backend
     filterQuery: '',
@@ -34,6 +55,8 @@ const state = {
     diff: null, // DiffResult for the selected file
     diffView: 'unified', // 'unified' | 'sidebyside' | 'merge' | 'conflicts'
     mergeTarget: 'left', // 'left' | 'right'
+    defaultView: 'unified', // the view to fall back to: default_view in the config file
+    defaultMergeTarget: 'left', // default_merge_target in the config file
     conflicts: [], // ConflictBlockDTOs of the selected file (when conflicted)
     conflictChoices: [], // per block: '' | 'ours' | 'theirs' | 'both' | 'both-theirs-first'
     mergeSelection: { insertions: new Set(), deletions: new Set() },
@@ -120,6 +143,82 @@ function hasUniqueFiles() {
     if (!state.comparison) return false;
     return state.comparison.files.some((f) => f.source !== 'both');
 }
+
+// ---------------------------------------------------------------------------
+// Collapsing the file list and paths bar
+// ---------------------------------------------------------------------------
+
+const appEl = el('app');
+
+// canCollapse reports whether there's a comparison to look at. Without one,
+// everything shows, or a remembered collapse would hide the path inputs.
+function canCollapse() {
+    return (state.comparison?.files.length ?? 0) > 0;
+}
+
+function applyLayout() {
+    const { filesCollapsed, pathsCollapsed, focus } = state.layout;
+    const can = canCollapse();
+    appEl.classList.toggle('focus-mode', can && focus);
+    appEl.classList.toggle('files-collapsed', can && (focus || filesCollapsed));
+    appEl.classList.toggle('paths-collapsed', can && !state.compareFailed && (focus || pathsCollapsed));
+    el('collapse-files-btn').disabled = !can;
+    el('collapse-paths-btn').disabled = !can;
+
+    const shown = state.shown;
+    if (shown) {
+        const text = shown.git
+            ? `git: ${shown.left || 'HEAD'} ↔ ${shown.right || 'working tree'}`
+            : `${shown.left} ↔ ${shown.right}`;
+        el('paths-slim-label').textContent = text;
+        el('paths-slim-label').title = text;
+    }
+}
+
+function setLayout(changes) {
+    Object.assign(state.layout, changes);
+    try {
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(state.layout));
+    } catch {
+        // The choice just won't be remembered.
+    }
+    applyLayout();
+    if (state.diff) renderContentHeader();
+}
+
+// In focus, showing one thing leaves the other as it looks now.
+function toggleFiles() {
+    if (!canCollapse()) return;
+    const { filesCollapsed, focus } = state.layout;
+    setLayout(focus ? { focus: false, filesCollapsed: false, pathsCollapsed: true } : { filesCollapsed: !filesCollapsed });
+}
+
+function togglePaths() {
+    if (!canCollapse()) return;
+    const { pathsCollapsed, focus } = state.layout;
+    setLayout(focus ? { focus: false, filesCollapsed: true, pathsCollapsed: false } : { pathsCollapsed: !pathsCollapsed });
+}
+
+function toggleFocus() {
+    if (canCollapse()) setLayout({ focus: !state.layout.focus });
+}
+
+el('collapse-files-btn').addEventListener('click', toggleFiles);
+el('expand-files-btn').addEventListener('click', toggleFiles);
+el('collapse-paths-btn').addEventListener('click', togglePaths);
+el('edit-paths-btn').addEventListener('click', editPaths);
+
+// editPaths shows the paths bar, ending focus, ready to type.
+function editPaths() {
+    setLayout({ focus: false, pathsCollapsed: false });
+    (state.mode === 'git' ? leftRefInput : leftPathInput).focus();
+}
+
+// Closes the More menu when clicking anywhere else.
+document.addEventListener('click', (e) => {
+    const menu = document.querySelector('.more-menu[open]');
+    if (menu && !menu.contains(e.target)) menu.open = false;
+});
 
 // ---------------------------------------------------------------------------
 // Mode switching
@@ -360,27 +459,56 @@ el('swap-paths').addEventListener('click', () => {
 // Compare actions
 // ---------------------------------------------------------------------------
 
-async function runComparison(promise) {
+// applySettings applies the settings that can change while the app runs.
+function applySettings(settings) {
+    document.documentElement.style.setProperty('--diff-font-size', `${settings.diffFontSize}px`);
+    state.defaultView = settings.defaultView;
+    state.defaultMergeTarget = settings.defaultMergeTarget;
+}
+
+// afterUserCompare applies the settings that act on a Compare the user ran, and
+// says so if the config file couldn't be used.
+async function afterUserCompare() {
+    try {
+        const settings = await GetSettings();
+        applySettings(settings);
+        if (settings.autoCollapsePaths && canCollapse()) setLayout({ pathsCollapsed: true });
+        if (settings.configError) {
+            setStatus(`Using default settings. Problem in ${settings.configPath}: ${settings.configError}`, 'warning');
+        }
+    } catch {
+        // Leave things as they are.
+    }
+}
+
+// runComparison shows a comparison's result. byUser is false for a reload, such
+// as after saving a merge, which mustn't collapse a bar someone just opened.
+async function runComparison(promise, byUser) {
     setStatus('Comparing…');
     try {
         const result = await promise;
         state.shown = { ...state.lastLoad };
+        state.compareFailed = false;
         applyComparisonResult(result);
-        setStatus(`Loaded ${result.files.length} file(s).`);
+        const hidden = result.hiddenIdentical ? `, ${result.hiddenIdentical} identical hidden` : '';
+        setStatus(`Loaded ${result.files.length} file(s)${hidden}.`);
+        if (byUser) await afterUserCompare();
     } catch (err) {
+        state.compareFailed = true;
+        applyLayout();
         setStatus(goErrorMessage(err), 'error');
     }
     updateComparePending();
 }
 
-function loadPaths(left, right) {
+function loadPaths(left, right, byUser = false) {
     state.lastLoad = { git: false, left, right };
-    return runComparison(LoadComparison(left, right));
+    return runComparison(LoadComparison(left, right), byUser);
 }
 
-function loadGit(leftRef, rightRef) {
+function loadGit(leftRef, rightRef, byUser = false) {
     state.lastLoad = { git: true, left: leftRef, right: rightRef };
-    return runComparison(LoadGitComparison(leftRef, rightRef));
+    return runComparison(LoadGitComparison(leftRef, rightRef), byUser);
 }
 
 // reloadComparison re-runs the last comparison, e.g. after a file was edited
@@ -401,13 +529,13 @@ el('compare-btn').addEventListener('click', () => {
         setStatus('Enter both a left and right path first.', 'error');
         return;
     }
-    loadPaths(left, right);
+    loadPaths(left, right, true);
 });
 
 el('git-compare-btn').addEventListener('click', () => {
     const leftRef = leftRefInput.value.trim() || 'HEAD';
     const rightRef = rightRefInput.value.trim();
-    loadGit(leftRef, rightRef);
+    loadGit(leftRef, rightRef, true);
 });
 
 [leftPathInput, rightPathInput].forEach((input) => {
@@ -432,6 +560,7 @@ function applyComparisonResult(result) {
 
     copyFilesBtn.disabled = result.gitMode || !hasUniqueFiles();
 
+    applyLayout();
     renderFileList();
     if (state.selectedRelPath) {
         selectFile(state.selectedRelPath);
@@ -478,13 +607,10 @@ function badgeFor(entry) {
     return '';
 }
 
-function renderFileList() {
-    if (!state.comparison || state.comparison.files.length === 0) {
-        fileListEl.innerHTML = '<div class="empty-state">Load a comparison to see files here.</div>';
-        return;
-    }
-
-    const files = [...state.comparison.files]
+// visibleFiles returns the files the list shows, in order: those matching the
+// filter, if there is one.
+function visibleFiles() {
+    return [...(state.comparison?.files ?? [])]
         .filter((f) => {
             if (!state.filterQuery) return true;
             return (
@@ -493,6 +619,29 @@ function renderFileList() {
             );
         })
         .sort((a, b) => a.relPath.localeCompare(b.relPath));
+}
+
+// stepFile selects the next (dir > 0) or previous (dir < 0) file, wrapping
+// around at the ends.
+function stepFile(dir) {
+    const files = visibleFiles();
+    if (files.length === 0) return;
+    const at = files.findIndex((f) => f.relPath === state.selectedRelPath);
+    const next = at < 0 ? 0 : (at + dir + files.length) % files.length;
+    selectFile(files[next].relPath);
+}
+
+function renderFileList() {
+    if (state.comparison?.hiddenIdentical && state.comparison.files.length === 0) {
+        fileListEl.innerHTML = `<div class="empty-state">All ${state.comparison.hiddenIdentical} file(s) are identical.</div>`;
+        return;
+    }
+    if (!state.comparison || state.comparison.files.length === 0) {
+        fileListEl.innerHTML = '<div class="empty-state">Load a comparison to see files here.</div>';
+        return;
+    }
+
+    const files = visibleFiles();
 
     if (files.length === 0) {
         fileListEl.innerHTML = '<div class="empty-state">No files match your filter.</div>';
@@ -533,7 +682,12 @@ async function selectFile(relPath) {
         state.diff = diff;
         state.targetDisk = 'unchanged';
         const keepTarget = justSaved && (state.mergeTarget === 'left' ? diff.leftEditable : diff.rightEditable);
-        if (!keepTarget) state.mergeTarget = diff.leftEditable || !diff.rightEditable ? 'left' : 'right';
+        if (!keepTarget) {
+            // The default side, unless it's not a file and the other one is.
+            const other = state.defaultMergeTarget === 'left' ? 'right' : 'left';
+            const editable = { left: diff.leftEditable, right: diff.rightEditable };
+            state.mergeTarget = editable[state.defaultMergeTarget] || !editable[other] ? state.defaultMergeTarget : other;
+        }
         // After a save nothing is pending, so nothing starts checked.
         if (justSaved) state.mergeSelection = { insertions: new Set(), deletions: new Set() };
         else resetMergeSelection();
@@ -544,10 +698,10 @@ async function selectFile(relPath) {
             state.conflictChoices = state.conflicts.map(() => '');
             if (!sameFile) state.diffView = 'conflicts';
         } else if (state.diffView === 'conflicts') {
-            state.diffView = 'unified';
+            state.diffView = state.defaultView;
         }
         if (state.diffView === 'merge' && !diff.canMerge) {
-            state.diffView = 'unified';
+            state.diffView = state.defaultView;
         }
         renderContentHeader();
         renderContentBody();
@@ -608,13 +762,40 @@ function renderContentHeader() {
     const diff = state.diff;
     renderMergeStatus(diff);
     if (!diff) {
-        contentHeaderEl.innerHTML =
-            '<div class="empty-state">Nothing loaded yet — enter two paths (or a git ref) above and press Compare.</div>';
+        contentHeaderEl.innerHTML = state.comparison?.hiddenIdentical
+            ? '<div class="empty-state">Nothing differs. To list identical files, turn off hide_identical in the config file.</div>'
+            : '<div class="empty-state">Nothing loaded yet — enter two paths (or a git ref) above and press Compare.</div>';
         return;
     }
 
+    const focus = appEl.classList.contains('focus-mode');
+    let fileNav = '';
+    if (appEl.classList.contains('files-collapsed')) {
+        const files = visibleFiles();
+        const at = files.findIndex((f) => f.relPath === diff.relPath);
+        fileNav = `
+        <div class="segmented file-nav">
+            <button class="segmented-btn" id="prev-file-btn" title="Previous file (p)" aria-label="Previous file">‹</button>
+            <span class="file-pos">${at < 0 ? '–' : at + 1}/${files.length}</span>
+            <button class="segmented-btn" id="next-file-btn" title="Next file (n)" aria-label="Next file">›</button>
+        </div>`;
+    }
+    const externalActions = focus
+        ? `<details class="more-menu">
+                <summary class="btn btn-ghost btn-small" title="More file actions">More ▾</summary>
+                <div class="more-menu-panel">
+                    ${externalActionsHtml(diff)}
+                    <div class="external-actions">
+                        <button class="btn btn-ghost btn-small" id="more-edit-paths-btn" title="Show the paths bar">Edit paths</button>
+                        <button class="btn btn-ghost btn-small" id="more-help-btn" title="Help (?)">Help</button>
+                    </div>
+                </div>
+            </details>`
+        : externalActionsHtml(diff);
+
     contentHeaderEl.innerHTML = `
-        <div class="content-title">
+        ${fileNav}
+        <div class="content-title" title="${escapeHtml(diff.leftLabel)} ↔ ${escapeHtml(diff.rightLabel)}">
             ${escapeHtml(diff.displayName)}
             <span class="path-sub">${escapeHtml(diff.leftLabel)} ↔ ${escapeHtml(diff.rightLabel)}</span>
         </div>
@@ -622,9 +803,10 @@ function renderContentHeader() {
             <span class="stat-equal">${diff.equal} equal</span>
             <span class="stat-insert">+${diff.inserted}</span>
             <span class="stat-delete">-${diff.deleted}</span>
+            ${diff.ignoring ? `<span class="stat-ignoring" title="Set in the config file. These differences are hidden, not gone">ignoring ${escapeHtml(diff.ignoring)}</span>` : ''}
         </div>
         <div class="content-actions">
-            ${externalActionsHtml(diff)}
+            ${externalActions}
             <div class="segmented" id="view-toggle">
                 ${diff.conflicted ? `<button class="segmented-btn${state.diffView === 'conflicts' ? ' active' : ''}" data-view="conflicts">Conflicts</button>` : ''}
                 <button class="segmented-btn${state.diffView === 'unified' ? ' active' : ''}" data-view="unified">Unified</button>
@@ -632,11 +814,22 @@ function renderContentHeader() {
                 <button class="segmented-btn${state.diffView === 'merge' ? ' active' : ''}" data-view="merge" ${diff.canMerge ? '' : 'disabled title="Only available for files that exist on both sides"'}>Merge</button>
             </div>
             <div class="segmented" id="change-nav">
-                <button class="segmented-btn" id="prev-change-btn" title="Previous change ([)">↑ Prev change</button>
-                <button class="segmented-btn" id="next-change-btn" title="Next change (])">↓ Next change</button>
+                <button class="segmented-btn" id="prev-change-btn" title="Previous change ([)">${focus ? '↑' : '↑ Prev'}</button>
+                <button class="segmented-btn" id="next-change-btn" title="Next change (])">${focus ? '↓' : '↓ Next'}</button>
             </div>
+            <button class="btn btn-ghost btn-small" id="focus-btn" title="${focus ? 'Bring back the file list and paths bar (f)' : 'Hide the file list and paths bar for more room (f)'}">${focus ? 'Exit focus' : 'Focus'}</button>
         </div>
     `;
+
+    el('focus-btn').addEventListener('click', toggleFocus);
+    el('prev-file-btn')?.addEventListener('click', () => stepFile(-1));
+    el('next-file-btn')?.addEventListener('click', () => stepFile(1));
+    el('more-edit-paths-btn')?.addEventListener('click', editPaths);
+    el('more-help-btn')?.addEventListener('click', openHelpModal);
+    const menu = contentHeaderEl.querySelector('.more-menu');
+    menu?.querySelector('.more-menu-panel').addEventListener('click', () => {
+        menu.open = false;
+    });
 
     document.querySelectorAll('#view-toggle .segmented-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -1207,7 +1400,7 @@ function renderMerge(diff) {
                 <button class="segmented-btn${state.mergeTarget === 'left' ? ' active' : ''}" data-target="left" ${editable.left ? 'title="Apply the checked changes to the left file"' : `disabled title="${notFile}"`}>Apply to left</button>
                 <button class="segmented-btn${state.mergeTarget === 'right' ? ' active' : ''}" data-target="right" ${editable.right ? 'title="Apply the checked changes to the right file"' : `disabled title="${notFile}"`}>Apply to right</button>
             </div>
-            <div class="stats">
+            <div class="stats selection-stats">
                 <span class="stat-insert">Insertions: ${stats.selIns}/${stats.totalIns} selected</span>
                 <span class="stat-delete">Deletions: ${stats.selDel}/${stats.totalDel} selected</span>
             </div>
@@ -1403,6 +1596,7 @@ function closeHelpModal() {
 }
 
 el('help-btn').addEventListener('click', openHelpModal);
+el('help-btn-slim').addEventListener('click', openHelpModal);
 el('help-modal-close').addEventListener('click', closeHelpModal);
 el('help-modal-done').addEventListener('click', closeHelpModal);
 helpModal.addEventListener('mousedown', (e) => {
@@ -1410,6 +1604,11 @@ helpModal.addEventListener('mousedown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+    const openMenu = document.querySelector('.more-menu[open]');
+    if (e.key === 'Escape' && openMenu) {
+        openMenu.open = false;
+        return;
+    }
     if (e.key === 'Escape' && !helpModal.classList.contains('hidden')) {
         closeHelpModal();
         return;
@@ -1432,6 +1631,11 @@ document.addEventListener('keydown', (e) => {
         openHelpModal();
         return;
     }
+    if (e.key === 'f') toggleFocus();
+    else if (e.key === 'l') toggleFiles();
+    else if (e.key === 'P') togglePaths();
+    else if (e.key === 'n') stepFile(1);
+    else if (e.key === 'p') stepFile(-1);
     if (!state.diff) return;
     if (e.key === 'e') openInEditor(defaultEditSide(state.diff), 0);
     else if (e.key === 'd') openInDiffTool();
@@ -1447,6 +1651,7 @@ document.addEventListener('keydown', (e) => {
 // Initial render
 // ---------------------------------------------------------------------------
 
+applyLayout();
 renderContentHeader();
 
 GetToolInfo()
@@ -1456,13 +1661,24 @@ GetToolInfo()
     })
     .catch(() => {});
 
-// Pre-fill paths passed on the command line, and compare if both were given.
-GetInitialPaths()
+// Settings come first, so the first comparison opens in the default view.
+GetSettings()
+    .then((settings) => {
+        el('config-path').textContent = settings.configPath || 'not available on this system';
+        applySettings(settings);
+        state.diffView = settings.defaultView;
+        if (settings.configError) {
+            setStatus(`Using default settings. Problem in ${settings.configPath}: ${settings.configError}`, 'warning');
+        }
+    })
+    .catch(() => {})
+    // Pre-fill paths passed on the command line, and compare if both were given.
+    .then(() => GetInitialPaths())
     .then((paths) => {
         const [left, right] = paths || [];
         if (left) leftPathInput.value = left;
         if (right) rightPathInput.value = right;
-        if (left && right) loadPaths(left, right);
+        if (left && right) loadPaths(left, right, true);
         else updateComparePending();
     })
     .catch((err) => setStatus(goErrorMessage(err), 'error'));

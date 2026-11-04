@@ -472,3 +472,81 @@ func TestDiskState(t *testing.T) {
 		t.Errorf("DiskState after removal = %q, %v", got, err)
 	}
 }
+
+// mergeWith compares target and other under opts, applies every change to the
+// target, saves it, and returns the bytes on disk.
+func mergeWith(t *testing.T, opts differ.Options, side, target, other string) string {
+	t.Helper()
+	path := t.TempDir() + "/f.txt"
+	if err := os.WriteFile(path, []byte(target), 0644); err != nil {
+		t.Fatal(err)
+	}
+	d := differ.NewWithOptions(opts)
+	var result *MergeResult
+	if side == "left" {
+		diff := d.CompareStrings("l", "r", target, other)
+		result = New().ApplyToLeft(diff, NewChangeSelection(diff))
+	} else {
+		diff := d.CompareStrings("l", "r", other, target)
+		result = New().ApplyToRight(diff, NewChangeSelection(diff))
+	}
+	if _, err := SaveVerified(path, result.Content); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	return string(got)
+}
+
+// Ignoring whitespace must not rewrite the target's unchanged lines with the
+// other side's whitespace: that would change the file behind the user's back.
+func TestMergeKeepsTargetsBytesWhenIgnoring(t *testing.T) {
+	all := differ.Options{IgnoreWhitespace: differ.WhitespaceAll}
+	target := "    keep  my   spacing\nold line\n\ttabs here \n"
+	other := "keep my spacing\nnew line\ntabs here\n"
+	want := "    keep  my   spacing\nnew line\n\ttabs here \n"
+
+	for _, side := range []string{"left", "right"} {
+		if got := mergeWith(t, all, side, target, other); got != want {
+			t.Errorf("%s:\n got %q\nwant %q", side, got, want)
+		}
+	}
+}
+
+func TestMergeKeepsTargetsLineEndingsWhenIgnoring(t *testing.T) {
+	endings := differ.Options{IgnoreLineEndings: true}
+	cases := []struct {
+		name, target, other, want string
+	}{
+		{"LF lines into a CRLF file", "a\r\nold\r\nb\r\n", "a\nnew\nb\n", "a\r\nnew\r\nb\r\n"},
+		{"CRLF lines into an LF file", "a\nold\nb\n", "a\r\nnew\r\nb\r\n", "a\nnew\nb\n"},
+		{"new last line", "a\r\nb\r\n", "a\nb\nc\n", "a\r\nb\r\nc\r\n"},
+		{"only endings differ: nothing to change", "a\r\nb\r\n", "a\nb\n", "a\r\nb\r\n"},
+		{"mixed target: keeps its lines, new line takes the most common", "a\r\nb\r\nc\nold\r\n", "a\nb\nc\nnew\n", "a\r\nb\r\nc\nnew\r\n"},
+	}
+	for _, c := range cases {
+		for _, side := range []string{"left", "right"} {
+			if got := mergeWith(t, endings, side, c.target, c.other); got != c.want {
+				t.Errorf("%s/%s:\n got %q\nwant %q", c.name, side, got, c.want)
+			}
+		}
+	}
+}
+
+// With nothing ignored, a merge behaves exactly as it did before options.
+func TestMergeWithoutOptionsIsUnchanged(t *testing.T) {
+	cases := []struct {
+		name, target, other, want string
+	}{
+		{"LF", "a\nold\nb\n", "a\nnew\nb\n", "a\nnew\nb\n"},
+		{"CRLF", "a\r\nold\r\nb\r\n", "a\r\nnew\r\nb\r\n", "a\r\nnew\r\nb\r\n"},
+		{"a CRLF line into an LF file stays CRLF", "a\nold\n", "a\nnew\r\n", "a\nnew\r\n"},
+		{"an LF line into a CRLF file keeps the target's end", "a\r\nold\r\n", "a\r\nnew\n", "a\r\nnew\r\n"},
+	}
+	for _, c := range cases {
+		for _, side := range []string{"left", "right"} {
+			if got := mergeWith(t, differ.Options{}, side, c.target, c.other); got != c.want {
+				t.Errorf("%s/%s:\n got %q\nwant %q", c.name, side, got, c.want)
+			}
+		}
+	}
+}

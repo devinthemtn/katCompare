@@ -84,6 +84,52 @@ func EditorCommand(path string, line int, gui bool) (*exec.Cmd, error) {
 	return OSOpenCommand(path), nil
 }
 
+// ConfiguredEditorCommand is EditorCommand with the editor from the config file
+// taking first place when one is set. A configured editor that can't be found is
+// an error rather than a quiet switch to some other editor. One that needs a
+// terminal is skipped in the GUI, so the same setting can suit the TUI.
+func ConfiguredEditorCommand(configured, path string, line int, gui bool) (*exec.Cmd, error) {
+	fields := SplitCommand(configured)
+	if len(fields) == 0 {
+		return EditorCommand(path, line, gui)
+	}
+	if _, err := exec.LookPath(fields[0]); err != nil {
+		return nil, fmt.Errorf("the editor in the config file wasn't found: %s", fields[0])
+	}
+	if gui && NeedsTerminal(fields) {
+		return EditorCommand(path, line, gui)
+	}
+	return editorExec(fields, path, line), nil
+}
+
+// SplitCommand splits a command line on spaces, keeping double-quoted parts
+// together, so that a program path can contain spaces.
+func SplitCommand(command string) []string {
+	var fields []string
+	var current strings.Builder
+	inQuotes, started := false, false
+	for _, r := range command {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+			started = true
+		case (r == ' ' || r == '\t') && !inQuotes:
+			if started {
+				fields = append(fields, current.String())
+				current.Reset()
+				started = false
+			}
+		default:
+			current.WriteRune(r)
+			started = true
+		}
+	}
+	if started {
+		fields = append(fields, current.String())
+	}
+	return fields
+}
+
 // editorExec builds the command for an editor command line opening path.
 func editorExec(fields []string, path string, line int) *exec.Cmd {
 	args := append(fields[1:len(fields):len(fields)], editorFileArgs(fields[0], path, line)...)

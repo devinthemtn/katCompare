@@ -530,3 +530,82 @@ func TestGitDiffAutodetectedZedUsesExtcmd(t *testing.T) {
 		t.Errorf("args = %v, want %v", cmd.Args, want)
 	}
 }
+
+func TestSplitCommand(t *testing.T) {
+	cases := map[string][]string{
+		"":                            nil,
+		"   ":                         nil,
+		"vim":                         {"vim"},
+		"code --wait":                 {"code", "--wait"},
+		"  code   --wait  ":           {"code", "--wait"},
+		`"C:\Program Files\x.exe" -n`: {`C:\Program Files\x.exe`, "-n"},
+		`C:\x.exe "a b" c`:            {`C:\x.exe`, "a b", "c"},
+		`x ""`:                        {"x", ""},
+	}
+	for in, want := range cases {
+		if got := SplitCommand(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("SplitCommand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// fakeProgram puts an executable with the given name on PATH.
+func fakeProgram(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	return dir
+}
+
+func TestConfiguredEditor(t *testing.T) {
+	isolate(t)
+	dir := fakeProgram(t, "myeditor", "fromenv", "nvim")
+	t.Setenv("KATCMP_EDITOR", "fromenv")
+
+	// It beats even KATCMP_EDITOR, in both apps.
+	for _, gui := range []bool{true, false} {
+		cmd, err := ConfiguredEditorCommand("myeditor --flag", "/x/f.txt", 0, gui)
+		if err != nil || !reflect.DeepEqual(cmd.Args, []string{"myeditor", "--flag", "/x/f.txt"}) {
+			t.Errorf("gui=%v: %v, %v", gui, cmd, err)
+		}
+	}
+
+	// Empty falls back to the environment.
+	for _, empty := range []string{"", "   "} {
+		cmd, err := ConfiguredEditorCommand(empty, "/x/f.txt", 0, false)
+		if err != nil || filepath.Base(cmd.Path) != "fromenv" {
+			t.Errorf("%q: %v, %v", empty, cmd, err)
+		}
+	}
+
+	// Not found is an error that names it, not a quiet switch.
+	cmd, err := ConfiguredEditorCommand("nothere --flag", "/x/f.txt", 0, false)
+	if err == nil || !strings.Contains(err.Error(), "nothere") {
+		t.Errorf("missing editor: %v, %v", cmd, err)
+	}
+
+	// A terminal editor suits the TUI, and the GUI skips it.
+	cmd, err = ConfiguredEditorCommand("nvim", "/x/f.txt", 0, false)
+	if err != nil || filepath.Base(cmd.Path) != "nvim" {
+		t.Errorf("TUI: %v, %v", cmd, err)
+	}
+	cmd, err = ConfiguredEditorCommand("nvim", "/x/f.txt", 0, true)
+	if err != nil || filepath.Base(cmd.Path) != "fromenv" {
+		t.Errorf("GUI should skip a terminal editor: %v, %v", cmd, err)
+	}
+
+	// A full path with spaces, in quotes.
+	spaced := filepath.Join(dir, "my editor")
+	if err := os.WriteFile(spaced, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err = ConfiguredEditorCommand(`"`+spaced+`" -n`, "/x/f.txt", 0, true)
+	if err != nil || !reflect.DeepEqual(cmd.Args, []string{spaced, "-n", "/x/f.txt"}) {
+		t.Errorf("quoted path: %v, %v", cmd, err)
+	}
+}

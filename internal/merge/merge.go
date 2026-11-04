@@ -106,11 +106,12 @@ func (m *Merger) ApplyToLeft(diff *differ.FileDiff, selection *ChangeSelection) 
 	var result strings.Builder
 	applied := 0
 	skipped := 0
+	incoming := incomingLineFor(diff, "left")
 
 	for i, line := range diff.Lines {
 		switch line.Type {
 		case differ.DiffEqual:
-			// Always include equal lines
+			// Always include equal lines, with the left file's own text
 			result.WriteString(line.Content)
 			result.WriteString("\n")
 
@@ -127,7 +128,7 @@ func (m *Merger) ApplyToLeft(diff *differ.FileDiff, selection *ChangeSelection) 
 		case differ.DiffInsert:
 			// Only include inserted lines if selected for insertion
 			if selection.IsInsertionSelected(i) {
-				result.WriteString(line.Content)
+				result.WriteString(incoming(line.Content))
 				result.WriteString("\n")
 				applied++
 			} else {
@@ -136,17 +137,7 @@ func (m *Merger) ApplyToLeft(diff *differ.FileDiff, selection *ChangeSelection) 
 		}
 	}
 
-	// Remove trailing newline if present
-	content := result.String()
-	if strings.HasSuffix(content, "\n") {
-		content = content[:len(content)-1]
-	}
-
-	return &MergeResult{
-		Content: content,
-		Applied: applied,
-		Skipped: skipped,
-	}
+	return finishMerge(&result, applied, skipped)
 }
 
 // ApplyToRight applies selected changes to create a merged version starting from the right file
@@ -154,12 +145,13 @@ func (m *Merger) ApplyToRight(diff *differ.FileDiff, selection *ChangeSelection)
 	var result strings.Builder
 	applied := 0
 	skipped := 0
+	incoming := incomingLineFor(diff, "right")
 
 	for i, line := range diff.Lines {
 		switch line.Type {
 		case differ.DiffEqual:
-			// Always include equal lines
-			result.WriteString(line.Content)
+			// Always include equal lines, with the right file's own text
+			result.WriteString(line.RightContent)
 			result.WriteString("\n")
 
 		case differ.DiffInsert:
@@ -175,7 +167,7 @@ func (m *Merger) ApplyToRight(diff *differ.FileDiff, selection *ChangeSelection)
 		case differ.DiffDelete:
 			// Only include deleted lines if selected for deletion
 			if selection.IsDeletionSelected(i) {
-				result.WriteString(line.Content)
+				result.WriteString(incoming(line.Content))
 				result.WriteString("\n")
 				applied++
 			} else {
@@ -184,16 +176,50 @@ func (m *Merger) ApplyToRight(diff *differ.FileDiff, selection *ChangeSelection)
 		}
 	}
 
-	// Remove trailing newline if present
-	content := result.String()
-	if strings.HasSuffix(content, "\n") {
-		content = content[:len(content)-1]
-	}
+	return finishMerge(&result, applied, skipped)
+}
 
+// finishMerge builds a MergeResult, without the final newline: SaveWithBackup
+// gives the file the trailing newline it had.
+func finishMerge(result *strings.Builder, applied, skipped int) *MergeResult {
 	return &MergeResult{
-		Content: content,
+		Content: strings.TrimSuffix(result.String(), "\n"),
 		Applied: applied,
 		Skipped: skipped,
+	}
+}
+
+// incomingLineFor returns what a line from the other side becomes in target. A
+// diff that ignored line endings would hide a mixed file, so there the line
+// takes the target's most common ending. Otherwise it's kept exactly as it is.
+func incomingLineFor(diff *differ.FileDiff, target string) func(string) string {
+	if !diff.IgnoredLineEndings {
+		return func(line string) string { return line }
+	}
+	crlf, lf := 0, 0
+	count := func(line string) {
+		if strings.HasSuffix(line, "\r") {
+			crlf++
+		} else {
+			lf++
+		}
+	}
+	for _, line := range diff.Lines {
+		switch {
+		case line.Type == differ.DiffEqual && target == "left":
+			count(line.Content)
+		case line.Type == differ.DiffEqual:
+			count(line.RightContent)
+		case line.Type == differ.DiffDelete && target == "left", line.Type == differ.DiffInsert && target == "right":
+			count(line.Content)
+		}
+	}
+	return func(line string) string {
+		line = strings.TrimSuffix(line, "\r")
+		if crlf > lf {
+			return line + "\r"
+		}
+		return line
 	}
 }
 

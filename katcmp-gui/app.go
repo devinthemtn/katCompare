@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"katcompare/internal/config"
 	"katcompare/internal/conflict"
 	"katcompare/internal/differ"
 	"katcompare/internal/external"
@@ -41,6 +42,12 @@ type App struct {
 
 	// Saves made this session.
 	merges *merge.Tracker
+
+	// Settings for the current comparison, read when it's loaded and kept until
+	// the next one. Merge selections are line numbers, so the diff a save
+	// recomputes has to come out the same as the one on screen.
+	diffOpts      differ.Options
+	hideIdentical bool
 
 	// Paths passed on the command line, pre-filled into the UI on startup.
 	initialPaths []string
@@ -90,11 +97,12 @@ type MergeStatusDTO struct {
 }
 
 type ComparisonResult struct {
-	LeftLabel  string      `json:"leftLabel"`
-	RightLabel string      `json:"rightLabel"`
-	GitMode    bool        `json:"gitMode"`
-	Dirs       bool        `json:"dirs"` // two directories (not git), so both can open in a diff tool
-	Files      []FileEntry `json:"files"`
+	HiddenIdentical int         `json:"hiddenIdentical"` // files left out by hide_identical
+	LeftLabel       string      `json:"leftLabel"`
+	RightLabel      string      `json:"rightLabel"`
+	GitMode         bool        `json:"gitMode"`
+	Dirs            bool        `json:"dirs"` // two directories (not git), so both can open in a diff tool
+	Files           []FileEntry `json:"files"`
 }
 
 type DiffLineDTO struct {
@@ -131,6 +139,7 @@ type DiffResult struct {
 	Conflicted    bool `json:"conflicted"`
 
 	MergeStatus *MergeStatusDTO `json:"mergeStatus,omitempty"`
+	Ignoring    string          `json:"ignoring"` // what the diff ignores, or ""
 }
 
 type GitRefOption struct {
@@ -208,6 +217,7 @@ func (a *App) LoadComparison(leftPath, rightPath string) (*ComparisonResult, err
 		return nil, fmt.Errorf("both a left and right path are required")
 	}
 
+	a.applyConfig()
 	leftFile, err := a.fileManager.LoadPath(leftPath)
 	if err != nil {
 		return nil, fmt.Errorf("left path: %w", err)
@@ -254,6 +264,7 @@ func (a *App) ListGitRefs() ([]GitRefOption, error) {
 // LoadGitComparison loads a diff between two git refs, or a ref and the
 // working tree when rightRef is empty.
 func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, error) {
+	a.applyConfig()
 	if leftRef == "" {
 		leftRef = "HEAD"
 	}
@@ -370,9 +381,21 @@ func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, er
 	return a.buildComparisonResult(), nil
 }
 
+// applyConfig reads the config file's settings for the next comparison.
+func (a *App) applyConfig() {
+	cfg, _ := config.Load() // GetSettings reports any problem with the file
+	a.fileManager.SetOptions(cfg.FileOptions())
+	a.diffOpts = cfg.DifferOptions()
+	a.differ = differ.NewWithOptions(a.diffOpts)
+	a.hideIdentical = cfg.Compare.HideIdentical
+}
+
 func (a *App) buildComparisonResult() *ComparisonResult {
 	entries := make([]FileEntry, 0, len(a.allFiles))
 	backups := a.merges.Backups()
+	// Comparing two single files always shows them.
+	canHide := a.hideIdentical && (a.gitMode || (a.leftFile != nil && a.rightFile != nil && a.leftFile.IsDir && a.rightFile.IsDir))
+	hidden := 0
 	for relPath, comp := range a.allFiles {
 		if a.isMergeBackup(comp, backups) {
 			continue
@@ -385,7 +408,11 @@ func (a *App) buildComparisonResult() *ComparisonResult {
 			MergeStatus: a.mergeStatusFor(comp),
 		}
 		if comp.Source == file.SourceBoth {
-			entry.Identical = comp.LeftFile.Content == comp.RightFile.Content
+			entry.Identical = a.diffOpts.Same(comp.LeftFile.Content, comp.RightFile.Content)
+			if canHide && entry.Identical && entry.MergeStatus == nil && !entry.Conflicted {
+				hidden++
+				continue
+			}
 		}
 		entries = append(entries, entry)
 	}
@@ -397,6 +424,8 @@ func (a *App) buildComparisonResult() *ComparisonResult {
 		GitMode:    a.gitMode,
 		Dirs:       !a.gitMode && a.leftFile.IsDir && a.rightFile.IsDir,
 		Files:      entries,
+
+		HiddenIdentical: hidden,
 	}
 }
 
@@ -484,6 +513,7 @@ func (a *App) GetDiff(relPath string) (*DiffResult, error) {
 		RightEditable: a.editablePath(comp, "right") != "",
 		Conflicted:    a.conflicts[relPath],
 		MergeStatus:   a.mergeStatusFor(comp),
+		Ignoring:      a.diffOpts.Describe(),
 	}, nil
 }
 
@@ -854,6 +884,32 @@ type ToolInfo struct {
 	CanDirDiff          bool `json:"canDirDiff"`
 }
 
+// Settings are the app's preferences, from the config file.
+type Settings struct {
+	AutoCollapsePaths  bool    `json:"autoCollapsePaths"`
+	DiffFontSize       float64 `json:"diffFontSize"`
+	DefaultView        string  `json:"defaultView"`
+	DefaultMergeTarget string  `json:"defaultMergeTarget"`
+	ConfigPath         string  `json:"configPath"`
+	ConfigError        string  `json:"configError"` // why the file couldn't be used
+}
+
+// GetSettings reads the config file. It's called when the settings are needed,
+// so a change applies without restarting the app.
+func (a *App) GetSettings() Settings {
+	var s Settings
+	s.ConfigPath, _ = config.Path()
+	cfg, err := config.Load()
+	if err != nil {
+		s.ConfigError = err.Error()
+	}
+	s.AutoCollapsePaths = cfg.GUI.AutoCollapsePaths
+	s.DiffFontSize = cfg.GUI.DiffFontSize
+	s.DefaultView = cfg.View.DefaultView
+	s.DefaultMergeTarget = cfg.View.DefaultMergeTarget
+	return s
+}
+
 // GetVersion returns the build version, shown in the help dialog.
 func (a *App) GetVersion() string {
 	return version
@@ -911,7 +967,8 @@ func (a *App) OpenInEditor(relPath, side string, line int) error {
 	if path == "" {
 		return fmt.Errorf("the %s side isn't a file on disk", side)
 	}
-	cmd, err := external.EditorCommand(path, line, true)
+	cfg, _ := config.Load() // read each time, so a change needs no restart
+	cmd, err := external.ConfiguredEditorCommand(cfg.Tools.Editor, path, line, true)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -18,38 +19,84 @@ type FileInfo struct {
 	Children []*FileInfo
 }
 
+// Options says what to leave out when loading a directory.
+type Options struct {
+	// Ignore lists names and wildcards to skip. One without a slash matches at
+	// any depth; one with a slash matches from the loaded directory. A trailing
+	// slash matches directories only.
+	Ignore     []string
+	ShowHidden bool // include dotfiles (.git is always skipped)
+}
+
+// skips reports whether a directory entry is left out. rel is its slash-separated
+// path from the loaded directory.
+func (o Options) skips(name, rel string, isDir bool) bool {
+	if name == ".git" || (strings.HasPrefix(name, ".") && !o.ShowHidden) {
+		return true
+	}
+	for _, pattern := range o.Ignore {
+		dirOnly := strings.HasSuffix(pattern, "/")
+		pattern = strings.TrimSuffix(pattern, "/")
+		if dirOnly && !isDir {
+			continue
+		}
+		target := name
+		if strings.Contains(pattern, "/") {
+			target = rel
+			pattern = strings.TrimPrefix(pattern, "/")
+		}
+		if ok, _ := path.Match(pattern, target); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // Manager handles file operations
-type Manager struct{}
+type Manager struct {
+	opts Options
+}
 
 // New creates a new file manager
 func New() *Manager {
 	return &Manager{}
 }
 
-// LoadPath loads a file or directory and returns FileInfo
+// SetOptions sets what later loads leave out.
+func (m *Manager) SetOptions(opts Options) {
+	m.opts = opts
+}
+
+// LoadPath loads a file or directory and returns FileInfo. A path named here is
+// always loaded: Options only applies to what's found inside a directory.
 func (m *Manager) LoadPath(path string) (*FileInfo, error) {
-	info, err := os.Stat(path)
+	return m.load(path, "")
+}
+
+// load loads path; rel is its slash-separated path from the root of the load.
+func (m *Manager) load(filePath, rel string) (*FileInfo, error) {
+	info, err := os.Stat(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to stat path %s: %w", path, err)
+		return nil, fmt.Errorf("failed to stat path %s: %w", filePath, err)
 	}
 
 	fileInfo := &FileInfo{
-		Path:  path,
-		Name:  filepath.Base(path),
+		Path:  filePath,
+		Name:  filepath.Base(filePath),
 		IsDir: info.IsDir(),
 		Size:  info.Size(),
 	}
 
 	if info.IsDir() {
-		children, err := m.loadDirectory(path)
+		children, err := m.loadDirectory(filePath, rel)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load directory %s: %w", path, err)
+			return nil, fmt.Errorf("failed to load directory %s: %w", filePath, err)
 		}
 		fileInfo.Children = children
 	} else {
-		content, err := m.readFile(path)
+		content, err := m.readFile(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+			return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
 		}
 		fileInfo.Content = content
 	}
@@ -58,7 +105,7 @@ func (m *Manager) LoadPath(path string) (*FileInfo, error) {
 }
 
 // loadDirectory recursively loads directory contents
-func (m *Manager) loadDirectory(dirPath string) ([]*FileInfo, error) {
+func (m *Manager) loadDirectory(dirPath, rel string) ([]*FileInfo, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -66,13 +113,21 @@ func (m *Manager) loadDirectory(dirPath string) ([]*FileInfo, error) {
 
 	var children []*FileInfo
 	for _, entry := range entries {
-		// Skip hidden files and directories
-		if strings.HasPrefix(entry.Name(), ".") {
+		childPath := filepath.Join(dirPath, entry.Name())
+		childRel := path.Join(rel, entry.Name())
+
+		// Decided before reading anything, so an ignored folder costs nothing.
+		isDir := entry.IsDir()
+		if entry.Type()&os.ModeSymlink != 0 {
+			if info, err := os.Stat(childPath); err == nil {
+				isDir = info.IsDir()
+			}
+		}
+		if m.opts.skips(entry.Name(), childRel, isDir) {
 			continue
 		}
 
-		childPath := filepath.Join(dirPath, entry.Name())
-		childInfo, err := m.LoadPath(childPath)
+		childInfo, err := m.load(childPath, childRel)
 		if err != nil {
 			// Log error but continue with other files
 			continue
