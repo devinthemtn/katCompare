@@ -374,7 +374,7 @@ The status lasts until the app closes, and clears if the file changes.
 The Merge toolbar also shows whether the target file matches the view right now:
 
 - **● Saved · matches disk**: nothing is checked, and the file hasn't changed since it was loaded
-- **○ Unsaved · N changes not written**: checked changes aren't in the file yet
+- **○ Unsaved · saving removes 20 lines from f.txt**: checked changes aren't in the file yet, and this says what saving would do. A checked change makes the target match the other side, so with Apply to right, a checked insertion is removed from the right file
 - **▲ Changed on disk**: the file changed or disappeared after it was loaded. Use **Reload**, or **Overwrite anyway** to replace those edits
 
 This is checked when you change a pick or return to the window, so it won't update while the window stays focused and idle.

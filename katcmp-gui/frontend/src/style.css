@@ -734,11 +734,10 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .save-state {
     font-size: 12px;
     font-weight: 700;
-    white-space: nowrap;
 }
 
 .save-state.saved { color: var(--green); }
-.save-state.unsaved { color: var(--text-dim); }
+.save-state.unsaved { color: var(--text); }
 .save-state.changed { color: var(--yellow); }
 
 .merge-line {

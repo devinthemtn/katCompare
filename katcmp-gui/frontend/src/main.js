@@ -1076,16 +1076,28 @@ function mergeStats() {
     };
 }
 
+// saveEffect says what saving the checked changes does to the target. A checked
+// change moves the target towards the other side, so a checked insertion adds a
+// line to the left file but removes one from the right file, and vice versa.
+function saveEffect(stats, target, targetName) {
+    const adds = target === 'left' ? stats.selIns : stats.selDel;
+    const removes = target === 'left' ? stats.selDel : stats.selIns;
+    const lines = (n) => `${n} ${n === 1 ? 'line' : 'lines'}`;
+    if (adds && removes) return `saving adds ${lines(adds)} and removes ${lines(removes)} in ${targetName}`;
+    if (adds) return `saving adds ${lines(adds)} to ${targetName}`;
+    return `saving removes ${lines(removes)} from ${targetName}`;
+}
+
 // saveStateHtml says whether the merge target on disk matches what the Merge
 // view shows. Nothing checked means the view's result is the target as loaded.
-function saveStateHtml(pending, targetName) {
+function saveStateHtml(pending, effect, targetName) {
     if (state.targetDisk !== 'unchanged') {
         const what = state.targetDisk === 'missing' ? 'no longer exists' : 'was changed outside this view';
         return `<span class="save-state changed" title="${escapeHtml(targetName)} ${what} after it was loaded, so what's shown here is out of date">▲ Changed on disk</span>
             <button class="btn btn-ghost btn-small" id="merge-reload">Reload</button>`;
     }
     if (pending > 0) {
-        return `<span class="save-state unsaved" title="Save to write the checked changes to ${escapeHtml(targetName)}">○ Unsaved · ${pending} ${pending === 1 ? 'change' : 'changes'} not written</span>`;
+        return `<span class="save-state unsaved" title="Nothing is written until you save">○ Unsaved · ${escapeHtml(effect)}</span>`;
     }
     return `<span class="save-state saved" title="${escapeHtml(targetName)} on disk is what this view shows">● Saved · matches disk</span>`;
 }
@@ -1134,11 +1146,12 @@ function renderMerge(diff) {
     const targetName = targetLabel.split(/[\\/]/).pop();
     const isFile = editable[state.mergeTarget];
     const pending = stats.selIns + stats.selDel;
+    const effect = saveEffect(stats, state.mergeTarget, targetName);
     const canSave = isFile && pending > 0 && state.targetDisk !== 'missing';
     const notFile = 'This side is a git revision, not a file on disk';
     const overwriting = state.targetDisk === 'changed';
     const saveLabel = overwriting ? 'Overwrite anyway' : `Save to ${escapeHtml(targetName)}`;
-    let saveTitle = `Overwrite ${escapeHtml(targetLabel)} (the old version is kept as ${escapeHtml(targetName)}.orig)`;
+    let saveTitle = `${escapeHtml(effect)} (the old version is kept as ${escapeHtml(targetName)}.orig)`;
     if (!isFile) saveTitle = notFile;
     else if (state.targetDisk === 'missing') saveTitle = `${escapeHtml(targetName)} no longer exists`;
     else if (pending === 0) saveTitle = 'No changes are checked, so there is nothing to save';
@@ -1180,7 +1193,7 @@ function renderMerge(diff) {
                 <span class="stat-insert">Insertions: ${stats.selIns}/${stats.totalIns} selected</span>
                 <span class="stat-delete">Deletions: ${stats.selDel}/${stats.totalDel} selected</span>
             </div>
-            ${isFile ? saveStateHtml(pending, targetName) : ''}
+            ${isFile ? saveStateHtml(pending, effect, targetName) : ''}
             <div class="merge-actions">
                 <button class="btn btn-ghost btn-small" id="merge-select-all">Select all</button>
                 <button class="btn btn-ghost btn-small" id="merge-select-none">Select none</button>
