@@ -794,6 +794,22 @@ function hunkStart(rows, i) {
     return changed(rows[i]) && !changed(rows[i - 1]) ? ' hunk-start' : '';
 }
 
+// updateStickyToolbar pins the Merge or Conflicts toolbar while the lines scroll
+// beneath it, unless the window is so small that it would hide most of them.
+function updateStickyToolbar() {
+    const bar = contentBodyEl.querySelector('.merge-toolbar');
+    bar?.classList.toggle('scrolls-away', bar.offsetHeight > contentBodyEl.clientHeight / 2);
+}
+
+new ResizeObserver(updateStickyToolbar).observe(contentBodyEl);
+
+// stickyToolbarHeight is how much of the content area the toolbar covers, so
+// that scrolling to something can land below it.
+function stickyToolbarHeight() {
+    const bar = contentBodyEl.querySelector('.merge-toolbar');
+    return bar && !bar.classList.contains('scrolls-away') ? bar.offsetHeight : 0;
+}
+
 // jumpToChange scrolls the next (dir > 0) or previous (dir < 0) block of
 // changes to a quarter of the way down the diff and highlights it. It steps
 // from the highlighted block while that is on screen, otherwise from the
@@ -807,7 +823,7 @@ function jumpToChange(dir) {
     }
     const bodyRect = contentBodyEl.getBoundingClientRect();
     const posOf = (row) => row.getBoundingClientRect().top - bodyRect.top + contentBodyEl.scrollTop;
-    const anchor = Math.round(contentBodyEl.clientHeight / 4);
+    const anchor = Math.max(Math.round(contentBodyEl.clientHeight / 4), stickyToolbarHeight() + 8);
 
     let idx;
     const current = contentBodyEl.querySelector('.hunk-start.hunk-current');
@@ -984,6 +1000,7 @@ function renderConflicts(diff) {
             <button class="btn btn-primary btn-small" id="conflict-save-mark" ${resolved === total ? '' : 'disabled title="Resolve every conflict first"'}>Save &amp; mark resolved</button>
         </div>
         <div class="conflict-list">${cards}</div>`;
+    updateStickyToolbar();
 
     contentBodyEl.querySelectorAll('[data-choice]').forEach((btn) => {
         btn.addEventListener('click', () => setConflictChoice(Number(btn.dataset.block), btn.dataset.choice));
@@ -1028,6 +1045,7 @@ function conflictKey(choice) {
     contentBodyEl.querySelector('.conflict-card.hunk-current')?.classList.remove('hunk-current');
     const card = contentBodyEl.querySelector(`.conflict-card[data-index="${next}"]`);
     card.classList.add('hunk-current');
+    card.style.scrollMarginTop = `${stickyToolbarHeight() + 8}px`;
     card.scrollIntoView({ block: 'start' });
 }
 
@@ -1202,6 +1220,7 @@ function renderMerge(diff) {
         </div>
         <div id="merge-lines">${lineRows}</div>
     `;
+    updateStickyToolbar();
 
     document.querySelectorAll('#merge-target-toggle .segmented-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
