@@ -6,6 +6,7 @@ import {
     GetDiff,
     GetInitialPaths,
     SaveMerge,
+    CheckTargetOnDisk,
     CopyFiles,
     SelectDirectory,
     SelectFile,
@@ -36,6 +37,8 @@ const state = {
     conflicts: [], // ConflictBlockDTOs of the selected file (when conflicted)
     conflictChoices: [], // per block: '' | 'ours' | 'theirs' | 'both' | 'both-theirs-first'
     mergeSelection: { insertions: new Set(), deletions: new Set() },
+    targetDisk: 'unchanged', // the merge target on disk vs as loaded: 'unchanged' | 'changed' | 'missing'
+    justSavedRelPath: null, // file whose next load keeps its target and starts with nothing checked
     copyTarget: 'to-right', // 'to-right' | 'to-left'
     copySelection: new Set(),
     lastLoad: null, // { git: bool, left, right } — to reload after external changes
@@ -66,6 +69,7 @@ const copyFilesBtn = el('copy-files-btn');
 
 const contentHeaderEl = el('content-header');
 const contentBodyEl = el('content-body');
+const mergeStatusEl = el('merge-status');
 
 const statusbarEl = document.querySelector('.statusbar');
 const statusMessageEl = el('status-message');
@@ -97,7 +101,7 @@ function debounce(fn, wait) {
 
 function setStatus(message, type) {
     statusMessageEl.textContent = message || '';
-    statusbarEl.classList.remove('error', 'success');
+    statusbarEl.classList.remove('error', 'success', 'warning');
     if (type) statusbarEl.classList.add(type);
 }
 
@@ -449,6 +453,8 @@ filterInput.addEventListener('input', () => {
 
 function iconFor(entry) {
     if (entry.conflicted) return '<span class="icon icon-conflict">⚠</span>';
+    if (entry.mergeStatus?.state === 'safe') return '<span class="icon icon-merged-safe">◆</span>';
+    if (entry.mergeStatus?.state === 'check') return '<span class="icon icon-merged-check">▲</span>';
     switch (entry.source) {
         case 'both':
             return entry.identical
@@ -465,6 +471,8 @@ function iconFor(entry) {
 
 function badgeFor(entry) {
     if (entry.conflicted) return '<span class="badge badge-conflict">conflict</span>';
+    if (entry.mergeStatus?.state === 'safe') return '<span class="badge badge-merged-safe">merged · safe</span>';
+    if (entry.mergeStatus?.state === 'check') return '<span class="badge badge-merged-check">merged · check</span>';
     if (entry.source === 'left') return '<span class="badge badge-left">left only</span>';
     if (entry.source === 'right') return '<span class="badge badge-right">right only</span>';
     return '';
@@ -513,14 +521,22 @@ function renderFileList() {
 
 async function selectFile(relPath) {
     state.selectedRelPath = relPath;
+    // Read this before the first await: the save handler clears it once its
+    // reload returns, which doesn't wait for this function.
+    const justSaved = state.justSavedRelPath === relPath;
+    state.justSavedRelPath = null;
     renderFileList();
 
     try {
         const diff = await GetDiff(relPath);
         const sameFile = state.diff?.relPath === relPath;
         state.diff = diff;
-        state.mergeTarget = diff.leftEditable || !diff.rightEditable ? 'left' : 'right';
-        resetMergeSelection();
+        state.targetDisk = 'unchanged';
+        const keepTarget = justSaved && (state.mergeTarget === 'left' ? diff.leftEditable : diff.rightEditable);
+        if (!keepTarget) state.mergeTarget = diff.leftEditable || !diff.rightEditable ? 'left' : 'right';
+        // After a save nothing is pending, so nothing starts checked.
+        if (justSaved) state.mergeSelection = { insertions: new Set(), deletions: new Set() };
+        else resetMergeSelection();
         state.conflicts = [];
         state.conflictChoices = [];
         if (diff.conflicted) {
@@ -540,6 +556,42 @@ async function selectFile(relPath) {
     }
 }
 
+// reloadAfterSave reloads the comparison after a save, then reports msg as a
+// warning if the file's merge status says it needs checking.
+async function reloadAfterSave(relPath, msg) {
+    state.justSavedRelPath = relPath;
+    await reloadComparison();
+    state.justSavedRelPath = null;
+    if (statusbarEl.classList.contains('error')) return;
+    const entry = state.comparison?.files.find((f) => f.relPath === relPath);
+    setStatus(msg, entry?.mergeStatus?.state === 'check' ? 'warning' : 'success');
+}
+
+// renderMergeStatus fills the banner above the diff with the selected file's
+// last save this session, or empties it.
+function renderMergeStatus(diff) {
+    const s = diff?.mergeStatus;
+    if (!s) {
+        mergeStatusEl.innerHTML = '';
+        return;
+    }
+    const safe = s.state === 'safe';
+    const details = [];
+    if (safe) {
+        if (s.kind === 'merge') details.push(`${s.applied} applied, ${s.skipped} skipped`);
+        else details.push('no conflicts left');
+    } else {
+        details.push(...(s.issues || []));
+    }
+    details.push(`${s.backup} kept`);
+    if (safe && diff.conflicted) details.push('mark resolved to stage it');
+    mergeStatusEl.innerHTML = `
+        <div class="merge-status-banner ${safe ? 'safe' : 'check'}">
+            <span class="merge-status-title">${safe ? '◆ Merged safely to' : '▲ Check this merge to'} ${escapeHtml(s.target)}</span>
+            <span class="merge-status-detail">${details.map(escapeHtml).join(' · ')}</span>
+        </div>`;
+}
+
 function resetMergeSelection() {
     const insertions = new Set();
     const deletions = new Set();
@@ -554,6 +606,7 @@ function resetMergeSelection() {
 
 function renderContentHeader() {
     const diff = state.diff;
+    renderMergeStatus(diff);
     if (!diff) {
         contentHeaderEl.innerHTML =
             '<div class="empty-state">Nothing loaded yet — enter two paths (or a git ref) above and press Compare.</div>';
@@ -983,7 +1036,7 @@ async function saveConflicts(markResolved) {
     if (!diff) return;
     try {
         const msg = await SaveConflicts(diff.relPath, state.conflictChoices, markResolved);
-        await reloadComparison(msg);
+        await reloadAfterSave(diff.relPath, msg);
     } catch (err) {
         setStatus(goErrorMessage(err), 'error');
     }
@@ -1023,13 +1076,73 @@ function mergeStats() {
     };
 }
 
+// saveStateHtml says whether the merge target on disk matches what the Merge
+// view shows. Nothing checked means the view's result is the target as loaded.
+function saveStateHtml(pending, targetName) {
+    if (state.targetDisk !== 'unchanged') {
+        const what = state.targetDisk === 'missing' ? 'no longer exists' : 'was changed outside this view';
+        return `<span class="save-state changed" title="${escapeHtml(targetName)} ${what} after it was loaded, so what's shown here is out of date">▲ Changed on disk</span>
+            <button class="btn btn-ghost btn-small" id="merge-reload">Reload</button>`;
+    }
+    if (pending > 0) {
+        return `<span class="save-state unsaved" title="Save to write the checked changes to ${escapeHtml(targetName)}">○ Unsaved · ${pending} ${pending === 1 ? 'change' : 'changes'} not written</span>`;
+    }
+    return `<span class="save-state saved" title="${escapeHtml(targetName)} on disk is what this view shows">● Saved · matches disk</span>`;
+}
+
+// diskCheckSeq identifies the latest disk check, so older replies are ignored.
+let diskCheckSeq = 0;
+
+// refreshTargetDisk compares the merge target on disk with what was loaded,
+// and redraws the Merge view if the answer changed.
+async function refreshTargetDisk() {
+    const diff = state.diff;
+    if (!diff || state.diffView !== 'merge') return;
+    const target = state.mergeTarget;
+    if (!(target === 'left' ? diff.leftEditable : diff.rightEditable)) return;
+    const seq = ++diskCheckSeq;
+    let result;
+    try {
+        result = await CheckTargetOnDisk(diff.relPath, target);
+    } catch {
+        return; // e.g. a reload replaced the comparison; the next check will tell
+    }
+    if (seq !== diskCheckSeq || state.diff !== diff || state.mergeTarget !== target) return;
+    if (result === state.targetDisk) return;
+    state.targetDisk = result;
+    if (result !== 'unchanged' && diff.mergeStatus) {
+        // The file no longer matches its last save, so that status is over.
+        // If the other side was saved too, its status returns on reload.
+        diff.mergeStatus = null;
+        const entry = state.comparison?.files.find((f) => f.relPath === diff.relPath);
+        if (entry) entry.mergeStatus = null;
+        renderMergeStatus(diff);
+        renderFileList();
+    }
+    if (state.diffView !== 'merge') return;
+    const top = contentBodyEl.scrollTop;
+    renderContentBody();
+    contentBodyEl.scrollTop = top;
+}
+
+window.addEventListener('focus', refreshTargetDisk);
+
 function renderMerge(diff) {
     const stats = mergeStats();
     const editable = { left: diff.leftEditable, right: diff.rightEditable };
     const targetLabel = state.mergeTarget === 'left' ? diff.leftLabel : diff.rightLabel;
     const targetName = targetLabel.split(/[\\/]/).pop();
-    const canSave = editable[state.mergeTarget];
+    const isFile = editable[state.mergeTarget];
+    const pending = stats.selIns + stats.selDel;
+    const canSave = isFile && pending > 0 && state.targetDisk !== 'missing';
     const notFile = 'This side is a git revision, not a file on disk';
+    const overwriting = state.targetDisk === 'changed';
+    const saveLabel = overwriting ? 'Overwrite anyway' : `Save to ${escapeHtml(targetName)}`;
+    let saveTitle = `Overwrite ${escapeHtml(targetLabel)} (the old version is kept as ${escapeHtml(targetName)}.orig)`;
+    if (!isFile) saveTitle = notFile;
+    else if (state.targetDisk === 'missing') saveTitle = `${escapeHtml(targetName)} no longer exists`;
+    else if (pending === 0) saveTitle = 'No changes are checked, so there is nothing to save';
+    else if (overwriting) saveTitle = `${escapeHtml(targetName)} changed on disk after it was loaded. Saving replaces those edits (the current version is kept as ${escapeHtml(targetName)}.orig)`;
 
     const lineRows = diff.lines
         .map((line, i) => {
@@ -1067,10 +1180,12 @@ function renderMerge(diff) {
                 <span class="stat-insert">Insertions: ${stats.selIns}/${stats.totalIns} selected</span>
                 <span class="stat-delete">Deletions: ${stats.selDel}/${stats.totalDel} selected</span>
             </div>
-            <div class="spacer"></div>
-            <button class="btn btn-ghost btn-small" id="merge-select-all">Select all</button>
-            <button class="btn btn-ghost btn-small" id="merge-select-none">Select none</button>
-            <button class="btn btn-primary btn-small" id="merge-save" ${canSave ? `title="Overwrite ${escapeHtml(targetLabel)} (the old version is kept as ${escapeHtml(targetName)}.orig)"` : `disabled title="${notFile}"`}>Save to ${escapeHtml(targetName)}</button>
+            ${isFile ? saveStateHtml(pending, targetName) : ''}
+            <div class="merge-actions">
+                <button class="btn btn-ghost btn-small" id="merge-select-all">Select all</button>
+                <button class="btn btn-ghost btn-small" id="merge-select-none">Select none</button>
+                <button class="btn btn-primary btn-small" id="merge-save" title="${saveTitle}" ${canSave ? '' : 'disabled'}>${saveLabel}</button>
+            </div>
         </div>
         <div id="merge-lines">${lineRows}</div>
     `;
@@ -1079,9 +1194,12 @@ function renderMerge(diff) {
         btn.addEventListener('click', () => {
             if (btn.disabled) return;
             state.mergeTarget = btn.dataset.target;
+            state.targetDisk = 'unchanged';
             renderContentBody();
         });
     });
+
+    el('merge-reload')?.addEventListener('click', () => reloadComparison('Reloaded from disk.'));
 
     el('merge-select-all').addEventListener('click', () => {
         resetMergeSelection();
@@ -1119,11 +1237,13 @@ function renderMerge(diff) {
                 selectedInsertions: [...state.mergeSelection.insertions],
                 selectedDeletions: [...state.mergeSelection.deletions],
             });
-            await reloadComparison(msg);
+            await reloadAfterSave(diff.relPath, msg);
         } catch (err) {
             setStatus(goErrorMessage(err), 'error');
         }
     });
+
+    refreshTargetDisk();
 }
 
 // ---------------------------------------------------------------------------

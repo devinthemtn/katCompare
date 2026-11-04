@@ -244,6 +244,22 @@ func (f *File) Context(i, n int) (before, after []string) {
 	return nil, nil
 }
 
+// MarkerLines returns the 1-based line numbers of the <<<<<<< and >>>>>>>
+// markers in content, whether or not they form a complete block. A lone
+// ======= isn't counted, since it's also ordinary text in Markdown and RST.
+func MarkerLines(content string) []int {
+	var found []int
+	for i, line := range strings.Split(content, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		_, ours := isMarker(line, markerOurs)
+		_, theirs := isMarker(line, markerTheirs)
+		if ours || theirs {
+			found = append(found, i+1)
+		}
+	}
+	return found
+}
+
 // Remaining counts the blocks left unresolved by choices.
 func Remaining(blocks int, choices []Choice) int {
 	n := 0

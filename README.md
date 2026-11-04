@@ -356,6 +356,28 @@ diff_tool = 'katcmp-win --wait "$LOCAL" "$REMOTE"'
 - **◄ Blue arrow**: File exists only in LEFT directory **[LEFT ONLY]**
 - **► Orange arrow**: File exists only in RIGHT directory **[RIGHT ONLY]**
 - **⚠ Yellow warning**: File has unresolved git merge conflicts **[CONFLICT]**
+- **◆ Green diamond** (GUI): File saved from the Merge or Conflicts view and passed its checks **[MERGED · SAFE]**
+- **▲ Yellow triangle** (GUI): File saved, but a check failed; the banner above the diff says which **[MERGED · CHECK]**
+
+### Merge Status (GUI)
+
+After each save from the Merge or Conflicts view, the GUI checks that:
+
+- the file on disk matches the merge result when read back
+- the `.orig` backup matches the previous version
+- no `<<<<<<<` or `>>>>>>>` lines remain
+
+The status lasts until the app closes, and clears if the file changes.
+
+"Safe" doesn't mean the two sides now match, so unchecked changes only appear as "N skipped". It also doesn't cover edits made outside the app before the save: those are replaced, with the version they were in kept as `.orig`. Only the latest version is kept, so a second save overwrites the backup. A file that deliberately contains conflict markers reads as "check".
+
+The Merge toolbar also shows whether the target file matches the view right now:
+
+- **● Saved · matches disk**: nothing is checked, and the file hasn't changed since it was loaded
+- **○ Unsaved · N changes not written**: checked changes aren't in the file yet
+- **▲ Changed on disk**: the file changed or disappeared after it was loaded. Use **Reload**, or **Overwrite anyway** to replace those edits
+
+This is checked when you change a pick or return to the window, so it won't update while the window stays focused and idle.
 
 ## 📄 Supported File Types
 
