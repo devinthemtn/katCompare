@@ -436,6 +436,31 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .icon-conflict { color: var(--yellow); }
 .badge-conflict { background: rgba(245, 217, 10, 0.18); color: var(--yellow); }
 
+/* Merged files: the shape and text carry the meaning as well as the colour. */
+.icon-merged-safe { color: var(--green); }
+.icon-merged-check { color: var(--yellow); }
+.badge-merged-safe { background: rgba(52, 211, 153, 0.16); color: var(--green); }
+.badge-merged-check { background: rgba(245, 217, 10, 0.18); color: var(--yellow); }
+
+.merge-status:empty { display: none; }
+
+.merge-status-banner {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 8px 16px;
+    font-size: 12.5px;
+    border-bottom: 1px solid var(--border);
+}
+
+.merge-status-banner.safe { background: rgba(52, 211, 153, 0.1); }
+.merge-status-banner.check { background: rgba(245, 217, 10, 0.1); }
+.merge-status-banner.safe .merge-status-title { color: var(--green); }
+.merge-status-banner.check .merge-status-title { color: var(--yellow); }
+.merge-status-title { font-weight: 700; }
+.merge-status-detail { color: var(--text-dim); }
+
 .empty-state {
     color: var(--text-faint);
     font-size: 13px;
@@ -699,6 +724,23 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     flex: 1;
 }
 
+.merge-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-left: auto;
+}
+
+.save-state {
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.save-state.saved { color: var(--green); }
+.save-state.unsaved { color: var(--text-dim); }
+.save-state.changed { color: var(--yellow); }
+
 .merge-line {
     display: flex;
     align-items: flex-start;
@@ -878,6 +920,11 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .statusbar.success #status-message {
     color: var(--green);
+    font-weight: 700;
+}
+
+.statusbar.warning #status-message {
+    color: var(--yellow);
     font-weight: 700;
 }
 

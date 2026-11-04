@@ -97,3 +97,237 @@ func TestSaveMergeRefusesGitRevision(t *testing.T) {
 		t.Errorf("stray files written: %v", matches)
 	}
 }
+
+// mergeDirs makes two directories holding different versions of f.txt and
+// loads them.
+func mergeDirs(t *testing.T) (*App, string) {
+	t.Helper()
+	left, right := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(left, "f.txt"), []byte("a\nleft\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(right, "f.txt"), []byte("a\nright\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp(nil)
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+	return a, left
+}
+
+// selectAll returns a save request with every change in relPath checked.
+func selectAll(t *testing.T, a *App, relPath, target string) MergeSaveRequest {
+	t.Helper()
+	diff, err := a.GetDiff(relPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := MergeSaveRequest{RelPath: relPath, Target: target}
+	for i, l := range diff.Lines {
+		switch l.Type {
+		case "insert":
+			req.SelectedInsertions = append(req.SelectedInsertions, i)
+		case "delete":
+			req.SelectedDeletions = append(req.SelectedDeletions, i)
+		}
+	}
+	return req
+}
+
+func findEntry(result *ComparisonResult, relPath string) *FileEntry {
+	for i := range result.Files {
+		if result.Files[i].RelPath == relPath {
+			return &result.Files[i]
+		}
+	}
+	return nil
+}
+
+func TestSaveMergeStatus(t *testing.T) {
+	a, left := mergeDirs(t)
+	if _, err := a.SaveMerge(selectAll(t, a, "f.txt", "left")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.LoadComparison(a.leftPath, a.rightPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := findEntry(result, "f.txt")
+	if entry == nil || entry.MergeStatus == nil || entry.MergeStatus.State != "safe" {
+		t.Fatalf("entry after merge = %+v, want safe", entry)
+	}
+	if s := entry.MergeStatus; s.Target != "f.txt" || s.Backup != "f.txt.orig" || s.Kind != "merge" {
+		t.Errorf("status = %+v", s)
+	}
+	if findEntry(result, "f.txt.orig") != nil {
+		t.Error("the backup is listed as a file")
+	}
+	if diff, err := a.GetDiff("f.txt"); err != nil || diff.MergeStatus == nil {
+		t.Errorf("GetDiff status = %+v, %v", diff, err)
+	}
+
+	// An edit after the save clears the status and shows the backup again.
+	if err := os.WriteFile(filepath.Join(left, "f.txt"), []byte("edited\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = a.LoadComparison(a.leftPath, a.rightPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := findEntry(result, "f.txt"); entry == nil || entry.MergeStatus != nil {
+		t.Errorf("entry after an outside edit = %+v, want no status", entry)
+	}
+	if findEntry(result, "f.txt.orig") == nil {
+		t.Error("the backup should be listed once its save is forgotten")
+	}
+}
+
+func TestSaveMergeReportsLeftoverMarkers(t *testing.T) {
+	a, left := mergeDirs(t)
+	right := a.rightPath
+	if err := os.WriteFile(filepath.Join(right, "f.txt"), []byte("a\n<<<<<<< HEAD\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := a.SaveMerge(selectAll(t, a, "f.txt", "left"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "Check: 1 conflict marker line(s) remain, first at line 2") {
+		t.Errorf("message = %q", msg)
+	}
+	result, err := a.LoadComparison(left, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := findEntry(result, "f.txt").MergeStatus; s == nil || s.State != "check" || len(s.Issues) != 1 {
+		t.Errorf("status = %+v, want check", s)
+	}
+}
+
+func TestMergingLastGitFileKeepsItsRow(t *testing.T) {
+	dir := conflictRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("merge", "--abort")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("working copy\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := NewApp(nil)
+	if _, err := a.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SaveMerge(selectAll(t, a, "f.txt", "right")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.LoadGitComparison("HEAD", "")
+	if err != nil {
+		t.Fatalf("reload after merging the last file: %v", err)
+	}
+	entry := findEntry(result, "f.txt")
+	if entry == nil || !entry.Identical || entry.MergeStatus == nil || entry.MergeStatus.State != "safe" {
+		t.Fatalf("entry = %+v, want identical and safe", entry)
+	}
+
+	// A later edit forgets the save, so once the file matches HEAD again its
+	// row goes as usual.
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("again\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err = a.LoadGitComparison("HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := findEntry(result, "f.txt"); entry == nil || entry.MergeStatus != nil {
+		t.Fatalf("entry after an edit = %+v, want no status", entry)
+	}
+	run("checkout", "--", "f.txt")
+	if _, err := a.LoadGitComparison("HEAD", ""); err == nil {
+		t.Error("expected no changes once the save is forgotten")
+	}
+}
+
+func TestSaveConflictsStatusAndBackup(t *testing.T) {
+	dir := conflictRepo(t)
+	path := filepath.Join(dir, "f.txt")
+	before, _ := os.ReadFile(path)
+	a := NewApp(nil)
+	if _, err := a.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := a.SaveConflicts("f.txt", []string{"ours", ""}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "Check: 2 conflict marker line(s) remain") {
+		t.Errorf("partial save message = %q", msg)
+	}
+	if orig, _ := os.ReadFile(path + ".orig"); string(orig) != string(before) {
+		t.Errorf("backup = %q, want the previous version", orig)
+	}
+	result, err := a.LoadGitComparison("HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := findEntry(result, "f.txt").MergeStatus; s == nil || s.State != "check" || s.Kind != "conflicts" {
+		t.Errorf("partial save status = %+v, want check", s)
+	}
+
+	if _, err := a.SaveConflicts("f.txt", []string{"both"}, true); err != nil {
+		t.Fatal(err)
+	}
+	result, err = a.LoadGitComparison("HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := findEntry(result, "f.txt").MergeStatus; s == nil || s.State != "safe" {
+		t.Errorf("full save status = %+v, want safe", s)
+	}
+}
+
+func TestCheckTargetOnDisk(t *testing.T) {
+	a, left := mergeDirs(t)
+	path := filepath.Join(left, "f.txt")
+	check := func(want string) {
+		t.Helper()
+		got, err := a.CheckTargetOnDisk("f.txt", "left")
+		if err != nil || got != want {
+			t.Errorf("CheckTargetOnDisk = %q, %v; want %q", got, err, want)
+		}
+	}
+
+	check("unchanged")
+
+	if _, err := a.SaveMerge(selectAll(t, a, "f.txt", "left")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.LoadComparison(a.leftPath, a.rightPath); err != nil {
+		t.Fatal(err)
+	}
+	check("unchanged")
+
+	data, _ := os.ReadFile(path)
+	crlf := strings.ReplaceAll(string(data), "\n", "\r\n")
+	if err := os.WriteFile(path, []byte(crlf), 0644); err != nil {
+		t.Fatal(err)
+	}
+	check("changed")
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	check("missing")
+}

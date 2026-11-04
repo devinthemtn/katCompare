@@ -301,3 +301,41 @@ func TestSaveWithBackup(t *testing.T) {
 		t.Error("expected error for a missing file")
 	}
 }
+
+func TestSaveVerified(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/f.txt"
+	if err := os.WriteFile(path, []byte("old\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := SaveVerified(path, "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Issues) != 0 {
+		t.Errorf("clean save: issues = %v", report.Issues)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "new\r\n" {
+		t.Errorf("saved %q, want the old newline style kept", got)
+	}
+	if report.Hash != HashContent(got) {
+		t.Error("hash doesn't match the saved file")
+	}
+	if orig, _ := os.ReadFile(report.Backup); string(orig) != "old\r\n" {
+		t.Errorf("backup = %q", orig)
+	}
+
+	report, err = SaveVerified(path, "a\n<<<<<<< HEAD\nb\n=======\nc\n>>>>>>> x\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Issues) != 1 || !strings.Contains(report.Issues[0], "2 conflict marker line(s) remain, first at line 2") {
+		t.Errorf("leftover markers: issues = %v", report.Issues)
+	}
+
+	if _, err := SaveVerified(dir+"/missing", "x"); err == nil {
+		t.Error("expected error for a missing file")
+	}
+}

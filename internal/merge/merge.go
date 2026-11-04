@@ -2,10 +2,13 @@ package merge
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
 
+	"katcompare/internal/conflict"
 	"katcompare/internal/differ"
 )
 
@@ -307,15 +310,75 @@ func SaveWithBackup(path, content string) (string, error) {
 	if err := os.WriteFile(backup, old, info.Mode().Perm()); err != nil {
 		return "", fmt.Errorf("failed to write backup: %w", err)
 	}
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		if bytes.HasSuffix(old, []byte("\r\n")) {
-			content += "\r\n"
-		} else if bytes.HasSuffix(old, []byte("\n")) {
-			content += "\n"
-		}
-	}
-	if err := os.WriteFile(path, []byte(content), info.Mode().Perm()); err != nil {
+	if err := os.WriteFile(path, []byte(withTrailingNewline(old, content)), info.Mode().Perm()); err != nil {
 		return "", fmt.Errorf("failed to save %s: %w", path, err)
 	}
 	return backup, nil
+}
+
+// withTrailingNewline gives content the trailing newline style of old, when
+// old had one and content doesn't.
+func withTrailingNewline(old []byte, content string) string {
+	if content == "" || strings.HasSuffix(content, "\n") {
+		return content
+	}
+	if bytes.HasSuffix(old, []byte("\r\n")) {
+		return content + "\r\n"
+	}
+	if bytes.HasSuffix(old, []byte("\n")) {
+		return content + "\n"
+	}
+	return content
+}
+
+// SaveReport describes a finished save and what checking it found.
+type SaveReport struct {
+	Backup string   // path of the backup of the previous version
+	Hash   string   // HashContent of the saved file
+	Issues []string // problems found, in plain language; empty when all is well
+}
+
+// HashContent returns the hash used to tell whether a saved file has changed.
+func HashContent(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+// SaveVerified saves like SaveWithBackup, then reads back the file and its
+// backup and looks for leftover conflict markers. It returns an error only
+// when the save itself fails; anything the checks find goes in Issues.
+func SaveVerified(path, content string) (*SaveReport, error) {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	backup, err := SaveWithBackup(path, content)
+	if err != nil {
+		return nil, err
+	}
+
+	want := []byte(withTrailingNewline(old, content))
+	report := &SaveReport{Backup: backup, Hash: HashContent(want)}
+
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		report.Issues = append(report.Issues, fmt.Sprintf("the saved file could not be read back: %v", err))
+		saved = want
+	} else {
+		report.Hash = HashContent(saved)
+		if !bytes.Equal(saved, want) {
+			report.Issues = append(report.Issues, "the saved file doesn't match the merge result")
+		}
+	}
+
+	if kept, err := os.ReadFile(backup); err != nil {
+		report.Issues = append(report.Issues, fmt.Sprintf("the backup could not be read back: %v", err))
+	} else if !bytes.Equal(kept, old) {
+		report.Issues = append(report.Issues, "the backup doesn't match the previous version")
+	}
+
+	if lines := conflict.MarkerLines(string(saved)); len(lines) > 0 {
+		report.Issues = append(report.Issues, fmt.Sprintf("%d conflict marker line(s) remain, first at line %d", len(lines), lines[0]))
+	}
+	return report, nil
 }

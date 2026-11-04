@@ -103,6 +103,26 @@ func TestContextAndRemaining(t *testing.T) {
 	}
 }
 
+func TestMarkerLines(t *testing.T) {
+	cases := []struct {
+		name, content string
+		want          []int
+	}{
+		{"none", "a\nb\n", nil},
+		{"two-way", twoWay, []int{2, 7, 9, 13}},
+		{"diff3", "<<<<<<< HEAD\na\n||||||| base\nb\n=======\nc\n>>>>>>> x\n", []int{1, 7}},
+		{"crlf", "a\r\n<<<<<<< HEAD\r\nb\r\n=======\r\nc\r\n>>>>>>> x\r\n", []int{2, 6}},
+		{"incomplete", "a\n<<<<<<< HEAD\nb\n", []int{2}},
+		{"lone separator", "Title\n=======\nbody\n", nil},
+		{"longer run", "<<<<<<<<\n>>>>>>>x\n", nil},
+	}
+	for _, c := range cases {
+		if got := MarkerLines(c.content); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: MarkerLines = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestChoiceNames(t *testing.T) {
 	for _, c := range []Choice{Unresolved, Ours, Theirs, OursThenTheirs, TheirsThenOurs} {
 		if ParseChoice(c.String()) != c {
