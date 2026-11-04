@@ -790,11 +790,9 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .merge-line.equal .content { color: var(--text-dim); }
 .merge-line.insert.selected { background: var(--insert-bg); }
 .merge-line.delete.selected { background: var(--delete-bg); }
-.merge-line.insert.unselected .content,
-.merge-line.delete.unselected .content {
-    color: var(--text-faint);
-    text-decoration: line-through;
-}
+/* Unticked: no background, but still easy to read */
+.merge-line.insert.unselected .content { color: var(--blue); }
+.merge-line.delete.unselected .content { color: var(--red); }
 .merge-line.insert .marker { color: var(--blue); }
 .merge-line.delete .marker { color: var(--red); }
 
