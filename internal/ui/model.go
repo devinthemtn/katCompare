@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"katcompare/internal/config"
 	"katcompare/internal/conflict"
 	"katcompare/internal/differ"
 	"katcompare/internal/external"
@@ -102,7 +103,15 @@ type Model struct {
 	// Merge status: saves made this session, and what they mean for each file
 	tracker     *merge.Tracker
 	statuses    map[string]*merge.Record
+	identical   map[string]bool // files on both sides with no differences to show
 	differCount int
+
+	// Settings for the current comparison, read when it's loaded and kept until
+	// the next one, so the diff on screen is always the one a merge saves.
+	diffOpts        differ.Options
+	hideIdentical   bool
+	hiddenIdentical int    // files left out of the list by hide_identical
+	configWarning   string // why the config file couldn't be used
 
 	// Services
 	fileManager *file.Manager
@@ -275,7 +284,7 @@ var (
 
 // New creates a new model
 func New() *Model {
-	return &Model{
+	m := &Model{
 		viewMode:       ViewModeOpen,
 		fileManager:    file.New(),
 		differ:         differ.New(),
@@ -292,6 +301,26 @@ func New() *Model {
 		copyTarget:     "to-right",
 		diffViewMode:   DiffViewUnified,
 	}
+	m.applyConfig()
+	cfg, _ := config.Load()
+	m.mergeTarget = cfg.View.DefaultMergeTarget
+	if cfg.View.DefaultView == config.ViewSideBySide {
+		m.diffViewMode = DiffViewSideBySide
+	}
+	return m
+}
+
+// applyConfig reads the config file's settings for the next comparison.
+func (m *Model) applyConfig() {
+	cfg, err := config.Load()
+	m.configWarning = ""
+	if err != nil {
+		m.configWarning = "Using default settings. Problem in config.toml: " + err.Error()
+	}
+	m.fileManager.SetOptions(cfg.FileOptions())
+	m.diffOpts = cfg.DifferOptions()
+	m.differ = differ.NewWithOptions(m.diffOpts)
+	m.hideIdentical = cfg.Compare.HideIdentical
 }
 
 // Init initializes the model
@@ -640,6 +669,7 @@ func (m *Model) comparePaths() {
 		m.errorMsg = "Enter both a left and a right path first"
 		return
 	}
+	m.applyConfig()
 	leftFile, err := m.fileManager.LoadPath(left)
 	if err != nil {
 		m.errorMsg = fmt.Sprintf("Left path: %s", err)
@@ -941,8 +971,11 @@ func (m *Model) enterMergeView() {
 		m.errorMsg = "Can't merge: this file exists only on the right. Use c to copy it"
 		return
 	}
-	if comp.LeftFile.Content == comp.RightFile.Content {
+	if m.identical[m.selectedFile] {
 		m.errorMsg = "These files are identical, so there's nothing to merge"
+		if ignoring := m.diffOpts.Describe(); ignoring != "" {
+			m.errorMsg = "These files are the same when ignoring " + ignoring + ", so there's nothing to merge"
+		}
 		return
 	}
 	m.viewMode = ViewModeMerge
@@ -1125,13 +1158,32 @@ func (m *Model) pruneMergeBackups() {
 // refreshStatuses works out each file's merge status and the list's summary.
 func (m *Model) refreshStatuses() {
 	m.statuses = make(map[string]*merge.Record)
+	m.identical = make(map[string]bool)
 	m.differCount = 0
 	for relPath, comp := range m.allFiles {
 		if rec := m.tracker.StatusOf(m.editablePathOf(comp, "left"), m.editablePathOf(comp, "right")); rec != nil {
 			m.statuses[relPath] = rec
 		}
-		if comp.Source != file.SourceBoth || comp.LeftFile.Content != comp.RightFile.Content {
+		if comp.Source == file.SourceBoth && m.diffOpts.Same(comp.LeftFile.Content, comp.RightFile.Content) {
+			m.identical[relPath] = true
+		} else {
 			m.differCount++
+		}
+	}
+}
+
+// pruneIdentical applies hide_identical. Comparing two single files always shows
+// them, and a file with a merge status or a conflict keeps its row.
+func (m *Model) pruneIdentical() {
+	m.hiddenIdentical = 0
+	if !m.hideIdentical || !(m.gitMode || (m.leftFile != nil && m.rightFile != nil && m.leftFile.IsDir && m.rightFile.IsDir)) {
+		return
+	}
+	for relPath := range m.identical {
+		if m.statuses[relPath] == nil && !m.conflicts[relPath] {
+			delete(m.allFiles, relPath)
+			delete(m.commonFiles, relPath)
+			m.hiddenIdentical++
 		}
 	}
 }
@@ -1199,13 +1251,20 @@ func runExternal(kind string, cmd *exec.Cmd) tea.Cmd {
 	})
 }
 
+// editorCommand opens path in the editor the config file names, or the usual
+// one. It reads the file each time, so a change needs no restart.
+func (m *Model) editorCommand(path string, line int) (*exec.Cmd, error) {
+	cfg, _ := config.Load()
+	return external.ConfiguredEditorCommand(cfg.Tools.Editor, path, line, false)
+}
+
 func (m *Model) openInEditor(side string) tea.Cmd {
 	path := m.editablePath(side)
 	if path == "" {
 		m.errorMsg = fmt.Sprintf("The %s side isn't a file on disk", side)
 		return nil
 	}
-	cmd, err := external.EditorCommand(path, m.cursorLineFor(side), false)
+	cmd, err := m.editorCommand(path, m.cursorLineFor(side))
 	if err != nil {
 		m.errorMsg = err.Error()
 		return nil
@@ -1285,6 +1344,7 @@ func (m *Model) reloadComparison() {
 	selected, shown := m.selectedFile, m.diffFile
 	cursor, scroll, hScroll := m.cursor, m.scrollOffset, m.hScrollOffset
 
+	m.applyConfig()
 	if m.gitMode {
 		if err := m.LoadGitComparison(m.leftRef, m.rightRef); err != nil {
 			m.errorMsg = err.Error()
@@ -1555,6 +1615,7 @@ func (m *Model) updateCommonFiles() {
 		m.allFiles = file.FindAllFiles(m.leftFile, m.rightFile)
 		m.pruneMergeBackups()
 		m.refreshStatuses()
+		m.pruneIdentical()
 		m.fileListScroll = 0 // Reset scroll when files change
 		m.syncSelectionToFilter()
 	}
@@ -1642,6 +1703,7 @@ func (m *Model) selectPreviousFile() {
 // leftRef is the older git ref (e.g. "HEAD", "HEAD~1", "abc1234").
 // rightRef is the newer ref; pass "" to compare leftRef against the working tree.
 func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
+	m.applyConfig()
 	root, err := git.FindRoot()
 	if err != nil {
 		return err
@@ -1765,6 +1827,7 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 	m.diffGen++
 	m.pruneMergeBackups()
 	m.refreshStatuses()
+	m.pruneIdentical()
 	m.syncSelectionToFilter()
 
 	return nil
@@ -1795,8 +1858,9 @@ func (m *Model) computeDiffCmd(relPath string) tea.Cmd {
 		return nil
 	}
 	gen := m.diffGen
+	d := differ.NewWithOptions(m.diffOpts)
 	return func() tea.Msg {
-		return diffReadyMsg{relPath: relPath, gen: gen, cached: computeDiff(differ.New(), comp)}
+		return diffReadyMsg{relPath: relPath, gen: gen, cached: computeDiff(d, comp)}
 	}
 }
 

@@ -331,3 +331,84 @@ func TestCheckTargetOnDisk(t *testing.T) {
 	}
 	check("missing")
 }
+
+// Merge selections are line numbers, so the diff a save recomputes must match
+// the one on screen even if the settings changed in between.
+func TestConfigEditBetweenViewAndSave(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	path := filepath.Join(left, "f.txt")
+	if err := os.WriteFile(path, []byte("a\n  b\nold\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(right, "f.txt"), []byte("a\nb\nnew\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp(nil)
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+	req := selectAll(t, a, "f.txt", "left")
+
+	writeConfig(t, "[compare]\nignore_whitespace = \"all\"\n")
+	if _, err := a.SaveMerge(req); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "a\nb\nnew\n" {
+		t.Errorf("saved %q, want what was on screen applied", got)
+	}
+}
+
+func TestConfigSettingsInTheApp(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	write := func(dir, name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(left, "crlf.txt", "a\r\nb\r\n")
+	write(right, "crlf.txt", "a\nb\n")
+	write(left, "same.txt", "s\n")
+	write(right, "same.txt", "s\n")
+	write(left, "real.txt", "x\n")
+	write(right, "real.txt", "y\n")
+	write(left, "skip.log", "x\n")
+
+	a := NewApp(nil)
+	result, err := a.LoadComparison(left, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 4 || result.HiddenIdentical != 0 {
+		t.Errorf("default: %d files, %d hidden", len(result.Files), result.HiddenIdentical)
+	}
+	if e := findEntry(result, "crlf.txt"); e.Identical {
+		t.Error("default: CRLF vs LF should differ")
+	}
+	if d, _ := a.GetDiff("crlf.txt"); d.Ignoring != "" {
+		t.Errorf("default: Ignoring = %q", d.Ignoring)
+	}
+
+	writeConfig(t, "[compare]\nignore = [\"*.log\"]\nignore_line_endings = true\nhide_identical = true\n[view]\ndefault_view = \"sidebyside\"\ndefault_merge_target = \"right\"\n[gui]\ndiff_font_size = 16\n")
+	result, err = a.LoadComparison(left, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || findEntry(result, "real.txt") == nil || result.HiddenIdentical != 2 {
+		t.Errorf("set: %+v, %d hidden", result.Files, result.HiddenIdentical)
+	}
+	if d, err := a.GetDiff("crlf.txt"); err != nil || d.Ignoring != "line endings" || d.Inserted+d.Deleted != 0 {
+		t.Errorf("hidden file's diff: %+v, %v", d, err)
+	}
+	s := a.GetSettings()
+	if s.DefaultView != "sidebyside" || s.DefaultMergeTarget != "right" || s.DiffFontSize != 16 || s.ConfigError != "" {
+		t.Errorf("settings = %+v", s)
+	}
+
+	writeConfig(t, "[gui]\ndiff_font_size = 1\n")
+	s = a.GetSettings()
+	if s.ConfigError == "" || s.DiffFontSize != 12.5 {
+		t.Errorf("bad value: %+v", s)
+	}
+}

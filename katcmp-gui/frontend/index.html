@@ -12,6 +12,13 @@
             <button class="mode-tab active" data-mode="paths">Files / Directories</button>
             <button class="mode-tab" data-mode="git">Git</button>
             <button class="btn btn-icon help-btn" id="help-btn" title="Help (?)">?</button>
+            <button class="btn btn-icon collapse-btn" id="collapse-paths-btn" title="Collapse the paths bar (P)" aria-label="Collapse the paths bar">▴</button>
+        </div>
+
+        <div class="paths-slim" id="paths-slim">
+            <span class="paths-slim-label" id="paths-slim-label"></span>
+            <button class="btn btn-ghost btn-small" id="edit-paths-btn" title="Show the paths bar (P)">Edit paths</button>
+            <button class="btn btn-icon help-btn" id="help-btn-slim" title="Help (?)">?</button>
         </div>
 
         <div class="path-form" id="paths-form">
@@ -62,10 +69,12 @@
     </header>
 
     <div class="main">
+        <button class="files-rail" id="expand-files-btn" title="Show the file list (l)" aria-label="Show the file list">▸</button>
         <aside class="sidebar">
             <div class="sidebar-header">
                 <input type="text" id="filter-input" placeholder="Filter files…" autocomplete="off"/>
                 <button class="btn btn-ghost btn-small" id="copy-files-btn" disabled title="Copy unique files between directories">Copy…</button>
+                <button class="btn btn-ghost btn-small collapse-btn" id="collapse-files-btn" title="Collapse the file list (l)" aria-label="Collapse the file list">◂</button>
             </div>
             <div class="file-list" id="file-list">
                 <div class="empty-state">Load a comparison to see files here.</div>
@@ -158,6 +167,10 @@
                         <dt><kbd>]</kbd> / <kbd>[</kbd></dt><dd>Jump to the next / previous change</dd>
                         <dt><kbd>o</kbd> <kbd>t</kbd> <kbd>b</kbd> <kbd>B</kbd> <kbd>u</kbd></dt><dd>Conflicts view: take ours / theirs / both / both (theirs first) / undo for the highlighted conflict</dd>
                         <dt><kbd>d</kbd></dt><dd>Open the file pair in your external diff tool</dd>
+                        <dt><kbd>f</kbd></dt><dd>Focus: hide the file list and paths bar and shrink the file bars to one row each. Press again to bring it all back</dd>
+                        <dt><kbd>l</kbd></dt><dd>Collapse or show the file list</dd>
+                        <dt><kbd>P</kbd></dt><dd>Collapse or show the paths bar</dd>
+                        <dt><kbd>n</kbd> / <kbd>p</kbd></dt><dd>Next / previous file, for when the file list is collapsed</dd>
                         <dt><kbd>?</kbd> / <kbd>F1</kbd></dt><dd>Show this help</dd>
                         <dt><kbd>Esc</kbd></dt><dd>Close a dialog</dd>
                     </dl>
@@ -175,7 +188,12 @@
 
                 <section class="help-section">
                     <h3>Config files</h3>
-                    <p>katCompare has no config file of its own. Tool choices are read from git config:</p>
+                    <p>katCompare's settings are in a file it creates the first time it runs, and never changes after that. Edits apply on your next Compare.</p>
+                    <dl class="help-keys help-keys-spaced">
+                        <dt>Settings file</dt><dd><code id="config-path"></code></dd>
+                        <dt>Settings</dt><dd>Files to skip, what to ignore when comparing, your editor, the view and merge target to start with, and more. The file's comments explain each one</dd>
+                    </dl>
+                    <p>Tool choices are read from git config:</p>
                     <dl class="help-keys help-keys-spaced">
                         <dt>Global</dt><dd><code>~/.gitconfig</code> or <code>~/.config/git/config</code><br>
                             Windows: <code>%USERPROFILE%\.gitconfig</code></dd>

@@ -91,6 +91,7 @@ The desktop app lives in [`katcmp-gui/`](katcmp-gui/). It imports the same diff/
 - **Copy**: copy files that exist on only one side into the other directory, in either direction
 - Path autocomplete and native file/folder picker dialogs
 - File-list filtering
+- **More room for the diff**: collapse the file list (`◂` or `l`) and the paths bar (`▴` or `P`) separately, or press **Focus** (`f`) to hide both and shrink the file header and merge toolbar to one row each, with the less common buttons, Edit paths and Help under **More ▾**. While the list is hidden, `‹ ›` or `n`/`p` change files. The choice is remembered between runs. To collapse the paths bar automatically after you run Compare, set `auto_collapse_paths` in the [config file](#config-file)
 - **External tools**: **Open left/right** (or **Open working copy** in git mode) opens the file in your editor; click any line number to open it at that line. **External diff** opens the pair in your diff tool, **Folders in diff tool** opens two compared directories, and **Merge tool** runs `git mergetool` on conflicted files (marked ⚠). Shortcuts: `e` = open, `d` = external diff. See [Editor & external diff tools](#editor--external-diff-tools)
 
 ### Building the GUI
@@ -321,6 +322,50 @@ Shown when you start `katcmp` with no paths, or press **o**. Paths are suggested
 - **F1**: Help (`?` and `q` are ordinary characters in a path)
 - **Ctrl+C**: Quit
 
+## Config file
+
+katCompare creates a settings file the first time the GUI or TUI runs. After that the file is yours: katCompare never changes or replaces it, and new settings use their default until you add them. Delete it to get a fresh copy the next time the app starts.
+
+| OS | Location |
+|----|----------|
+| Linux | `~/.config/katcompare/config.toml` (or under `$XDG_CONFIG_HOME`) |
+| macOS | `~/Library/Application Support/katcompare/config.toml` |
+| Windows | `%AppData%\katcompare\config.toml` |
+
+The GUI's and TUI's help screens show the exact path. Under WSL, the Windows and Linux builds each have their own file, since each uses its own OS's location. `katcmp-win` runs the Windows build, so it uses the one in `%AppData%`.
+
+A copy made by an earlier version keeps working, and any setting it doesn't mention uses the default below. To get these comments too, delete it and restart.
+
+```toml
+[compare]
+# Files and folders to skip when comparing folders.
+# ignore = ["node_modules", "build", "dist", "*.log", "docs/generated/"]
+ignore = []
+show_hidden = false          # include dotfiles like .github (.git is always skipped)
+hide_identical = false       # when comparing folders, list only the files that differ
+ignore_line_endings = false  # treat CRLF and LF as the same
+ignore_whitespace = "none"   # "none", "trailing" (at line ends) or "all" (anywhere)
+
+[view]
+default_view = "unified"       # the view to start in: "unified" or "sidebyside"
+default_merge_target = "left"  # the side a merge saves to: "left" or "right"
+
+[tools]
+editor = ""  # ahead of $KATCMP_EDITOR, $VISUAL and $EDITOR; see below
+
+[gui]
+auto_collapse_paths = false  # collapse the paths bar after you run Compare
+diff_font_size = 12.5        # the size of the diff text, from 8 to 32
+```
+
+- **`ignore`** uses simple matching, not full `.gitignore` syntax. A name or wildcard matches at any depth, one containing `/` matches from the compared folder, and one ending in `/` matches only folders. Ignored folders aren't read at all, so listing `node_modules` also saves the time and memory of loading it. A path you name directly is always compared.
+- **`ignore_line_endings` and `ignore_whitespace`** change what counts as a difference, and the file header says when either is on, because a file can show as the same while its bytes differ. Saving a merge keeps the target's own text on every line it doesn't change. With `ignore_line_endings` on, lines brought across take the target's most common line ending, so a merge can't leave a mixed file.
+- **`editor`**: put double quotes around a path with spaces, and on Windows wrap the whole value in single quotes so backslashes work: `editor = '"C:\Program Files\Notepad++\notepad++.exe" -n'`. An editor that needs a terminal is skipped in the GUI, so the same setting can suit the TUI.
+
+Edits apply on your next comparison, with no restart, except `default_view` and the TUI's `default_merge_target`, which are read when the app starts. If a setting is invalid or the file can't be read, the app uses all the defaults, says what's wrong, and leaves the file for you to fix.
+
+Diff and merge tools aren't in this file. They come from git config, as described below.
+
 ## Editor & external diff tools
 
 Both the GUI and the TUI can hand the current file off to other apps.
@@ -331,7 +376,7 @@ Both the GUI and the TUI can hand the current file off to other apps.
 3. `$EDITOR`
 4. the OS default app (`xdg-open` / `open` / `start`)
 
-The value can include arguments, for example `KATCMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI prefers terminal editors: if `$VISUAL` is a GUI editor (e.g. `emacsclient -c`) and `$EDITOR` runs in a terminal (e.g. `emacsclient -t`), the TUI uses `$EDITOR`. `$KATCMP_EDITOR` always wins. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
+The `editor` setting in the [config file](#config-file) comes before all of these. The value can include arguments, for example `KATCMP_EDITOR="code --wait"`. The GUI has no terminal, so it skips terminal-only editors (`nvim`, `emacsclient -t`, `nano`, …) and moves on to the next choice. The TUI prefers terminal editors: if `$VISUAL` is a GUI editor (e.g. `emacsclient -c`) and `$EDITOR` runs in a terminal (e.g. `emacsclient -t`), the TUI uses `$EDITOR`. `$KATCMP_EDITOR` always wins. The TUI suspends itself while a terminal editor runs. Jumping to a line works for vi/vim/nvim, emacs/emacsclient, nano, micro, VS Code, Zed, Sublime and Helix.
 
 **Diff and merge tools** come from your git config, so set them once:
 

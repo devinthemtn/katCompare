@@ -301,3 +301,137 @@ func TestIsTextFileUnknownExtensionSniffsContent(t *testing.T) {
 		t.Error("expected content with NUL bytes to NOT be a text file")
 	}
 }
+
+// loadedNames loads root with opts and returns its files' paths, relative to it.
+func loadedNames(t *testing.T, root string, opts Options) map[string]bool {
+	t.Helper()
+	m := New()
+	m.SetOptions(opts)
+	info, err := m.LoadPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make(map[string]bool)
+	for _, f := range info.GetAllFiles() {
+		rel, _ := filepath.Rel(root, f.Path)
+		names[filepath.ToSlash(rel)] = true
+	}
+	return names
+}
+
+func ignoreTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, rel := range []string{
+		"a.txt", "b.log", ".env", ".github/ci.yml", ".git/config", "src/.git/config",
+		"node_modules/x/y.js", "src/node_modules/z.js", "src/c.txt", "src/d.log",
+		"docs/generated/g.md", "docs/manual.md", "src/docs/generated/h.md", "build", "src/build/out.txt",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestLoadOptions(t *testing.T) {
+	root := ignoreTree(t)
+	base := []string{"a.txt", "b.log", "build", "docs/generated/g.md", "docs/manual.md", "node_modules/x/y.js",
+		"src/build/out.txt", "src/c.txt", "src/d.log", "src/docs/generated/h.md", "src/node_modules/z.js"}
+	without := func(remove ...string) []string {
+		var out []string
+		for _, name := range base {
+			keep := true
+			for _, r := range remove {
+				if name == r {
+					keep = false
+				}
+			}
+			if keep {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		opts Options
+		want []string
+	}{
+		{"default skips dotfiles", Options{}, base},
+		{"a name matches at any depth", Options{Ignore: []string{"node_modules"}}, without("node_modules/x/y.js", "src/node_modules/z.js")},
+		{"a wildcard matches at any depth", Options{Ignore: []string{"*.log"}}, without("b.log", "src/d.log")},
+		{"a slash matches from the root", Options{Ignore: []string{"docs/generated"}}, without("docs/generated/g.md")},
+		{"a leading slash matches from the root", Options{Ignore: []string{"/a.txt", "/c.txt"}}, without("a.txt")},
+		{"a trailing slash matches folders only", Options{Ignore: []string{"build/"}}, without("src/build/out.txt")},
+		{"a wildcard in a path", Options{Ignore: []string{"src/*.log"}}, without("src/d.log")},
+		{"show hidden", Options{ShowHidden: true}, append(append([]string{}, base...), ".env", ".github/ci.yml")},
+		{"show hidden can still ignore", Options{ShowHidden: true, Ignore: []string{".env"}}, append(append([]string{}, base...), ".github/ci.yml")},
+	}
+	for _, c := range cases {
+		got := loadedNames(t, root, c.opts)
+		want := make(map[string]bool)
+		for _, name := range c.want {
+			want[name] = true
+		}
+		for name := range want {
+			if !got[name] {
+				t.Errorf("%s: %s is missing", c.name, name)
+			}
+		}
+		for name := range got {
+			if !want[name] {
+				t.Errorf("%s: %s should be left out", c.name, name)
+			}
+		}
+	}
+}
+
+func TestIgnoredFoldersAreNotRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read anything")
+	}
+	root := t.TempDir()
+	secret := filepath.Join(root, "locked")
+	if err := os.Mkdir(secret, 0755); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(secret, "f.txt")
+	if err := os.WriteFile(blocked, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ok.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A FIFO blocks forever if opened, so reaching it would hang this test.
+	if err := syscallMkfifo(filepath.Join(secret, "pipe")); err != nil {
+		t.Skip(err)
+	}
+	got := loadedNames(t, root, Options{Ignore: []string{"locked"}})
+	if !got["ok.txt"] || len(got) != 1 {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestNamedPathsAreNeverIgnored(t *testing.T) {
+	root := ignoreTree(t)
+	m := New()
+	m.SetOptions(Options{Ignore: []string{"*.log", "node_modules"}})
+
+	f, err := m.LoadPath(filepath.Join(root, "b.log"))
+	if err != nil || f.Content != "x\n" {
+		t.Errorf("a named file: %+v, %v", f, err)
+	}
+	dir, err := m.LoadPath(filepath.Join(root, "node_modules"))
+	if err != nil || len(dir.GetAllFiles()) != 1 {
+		t.Errorf("a named folder: %v files, %v", len(dir.GetAllFiles()), err)
+	}
+	hidden, err := New().LoadPath(filepath.Join(root, ".env"))
+	if err != nil || hidden.Content != "x\n" {
+		t.Errorf("a named dotfile: %+v, %v", hidden, err)
+	}
+}

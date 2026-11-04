@@ -339,3 +339,94 @@ func TestCompareFiles(t *testing.T) {
 		t.Errorf("expected insertions and deletions, got ins=%d del=%d", ins, del)
 	}
 }
+
+func TestOptionsKeepOriginalText(t *testing.T) {
+	d := NewWithOptions(Options{IgnoreWhitespace: WhitespaceAll}).CompareStrings("l", "r", "  a b\nsame\n", "ab  \nsame\n")
+	if len(d.Lines) != 2 || d.Lines[0].Type != DiffEqual {
+		t.Fatalf("lines = %+v, want two equal", d.Lines)
+	}
+	if d.Lines[0].Content != "  a b" || d.Lines[0].RightContent != "ab  " {
+		t.Errorf("line = %+v, want each side's own text", d.Lines[0])
+	}
+	rows := BuildSideBySideRows(d.Lines)
+	if rows[0].LeftContent != "  a b" || rows[0].RightContent != "ab  " {
+		t.Errorf("side by side = %+v, want each side's own text", rows[0])
+	}
+}
+
+func TestOptionsSame(t *testing.T) {
+	none := Options{}
+	endings := Options{IgnoreLineEndings: true}
+	trailing := Options{IgnoreWhitespace: WhitespaceTrailing}
+	all := Options{IgnoreWhitespace: WhitespaceAll}
+	both := Options{IgnoreLineEndings: true, IgnoreWhitespace: WhitespaceTrailing}
+
+	cases := []struct {
+		name        string
+		opts        Options
+		left, right string
+		want        bool
+	}{
+		{"identical bytes, no options", none, "a\n", "a\n", true},
+		{"CRLF vs LF, no options", none, "a\r\n", "a\n", false},
+		{"whitespace, no options", none, "a \n", "a\n", false},
+		{"empty whitespace setting means none", Options{IgnoreWhitespace: ""}, "a \n", "a\n", false},
+		{"explicit none", Options{IgnoreWhitespace: WhitespaceNone}, "a \n", "a\n", false},
+
+		{"CRLF vs LF", endings, "a\r\nb\r\n", "a\nb\n", true},
+		{"line endings don't hide text changes", endings, "a\r\n", "b\n", false},
+		{"line endings don't hide whitespace", endings, "a \r\n", "a\n", false},
+		{"lone CR mid-line isn't a line ending", endings, "a\rb\n", "ab\n", false},
+
+		{"trailing spaces and tabs", trailing, "a \t\nb\n", "a\nb \n", true},
+		{"trailing doesn't hide indentation", trailing, " a\n", "a\n", false},
+		{"trailing keeps line endings distinct", trailing, "a \r\n", "a\n", false},
+		{"trailing inside CRLF", trailing, "a \r\n", "a\r\n", true},
+
+		{"all whitespace", all, "\ta  b\n", "a b \n", true},
+		{"all doesn't join text changes", all, "a b\n", "a c\n", false},
+		{"blank lines still count", all, "a\n\nb\n", "a\nb\n", false},
+
+		{"both together", both, "a \r\n", "a\n", true},
+	}
+	for _, c := range cases {
+		if got := c.opts.Same(c.left, c.right); got != c.want {
+			t.Errorf("%s: Same(%q, %q) = %v, want %v", c.name, c.left, c.right, got, c.want)
+		}
+		// Same must agree with what the diff shows.
+		d := NewWithOptions(c.opts).CompareStrings("l", "r", c.left, c.right)
+		_, ins, del := d.GetStats()
+		if noDiff := ins == 0 && del == 0; noDiff != c.want {
+			t.Errorf("%s: diff shows %d+ %d-, but want same=%v", c.name, ins, del, c.want)
+		}
+	}
+}
+
+func TestOptionsDescribe(t *testing.T) {
+	for _, c := range []struct {
+		opts Options
+		want string
+	}{
+		{Options{}, ""},
+		{Options{IgnoreWhitespace: WhitespaceNone}, ""},
+		{Options{IgnoreWhitespace: WhitespaceAll}, "whitespace"},
+		{Options{IgnoreLineEndings: true}, "line endings"},
+		{Options{IgnoreLineEndings: true, IgnoreWhitespace: WhitespaceTrailing}, "whitespace, line endings"},
+	} {
+		if got := c.opts.Describe(); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.opts, got, c.want)
+		}
+	}
+}
+
+func TestNoOptionsKeepsEqualLinesIdentical(t *testing.T) {
+	d := New().CompareStrings("l", "r", "a\r\nb\n", "a\r\nb\n")
+	for _, line := range d.Lines {
+		if line.Content != line.RightContent {
+			t.Errorf("line = %+v", line)
+		}
+	}
+	if d.IgnoredLineEndings {
+		t.Error("IgnoredLineEndings should be off by default")
+	}
+}

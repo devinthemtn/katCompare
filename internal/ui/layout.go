@@ -124,6 +124,12 @@ func (m *Model) renderHeader() string {
 	if n := len(m.allFiles); n > 0 {
 		summary = fmt.Sprintf("%s · %d differ", plural(n, "file"), m.differCount)
 	}
+	if m.hiddenIdentical > 0 {
+		if summary != "" {
+			summary += " · "
+		}
+		summary += fmt.Sprintf("%d identical hidden", m.hiddenIdentical)
+	}
 	text := " katCompare"
 	if m.leftFile != nil && m.rightFile != nil {
 		room := max(4, (w-lipgloss.Width(summary)-lipgloss.Width(text)-10)/2)
@@ -162,6 +168,8 @@ func (m *Model) renderMessage() string {
 		return warnStyle.Render(truncate(" "+sanitizeLine(m.statusMsg), w))
 	case m.statusMsg != "":
 		return statusStyle.Render(truncate(" "+sanitizeLine(m.statusMsg), w))
+	case m.configWarning != "":
+		return warnStyle.Render(truncate(" "+sanitizeLine(m.configWarning), w))
 	}
 	return ""
 }

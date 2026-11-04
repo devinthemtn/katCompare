@@ -19,7 +19,9 @@ const (
 // DiffLine represents a single line in the diff output
 type DiffLine struct {
 	Type         DiffType
-	Content      string
+	Content      string // The line's text; for an equal line, the left side's text
+	RightContent string // For an equal line, the right side's text. They can differ
+	// when Options ignores something, so each side's own bytes are kept.
 	LineNum      int // Left line num for equal/delete; right line num for insert (unified view)
 	LeftLineNum  int // Left file line number; -1 if not applicable
 	RightLineNum int // Right file line number; -1 if not applicable
@@ -57,7 +59,7 @@ func BuildSideBySideRows(lines []DiffLine) []SideBySideRow {
 			rows = append(rows, SideBySideRow{
 				Type:         SBSEqual,
 				LeftContent:  line.Content,
-				RightContent: line.Content,
+				RightContent: line.RightContent,
 				LeftLineNum:  line.LeftLineNum,
 				RightLineNum: line.RightLineNum,
 			})
@@ -101,14 +103,106 @@ type FileDiff struct {
 	LeftFile  string
 	RightFile string
 	Lines     []DiffLine
+
+	// IgnoredLineEndings records that line endings weren't compared, so a merge
+	// knows to give the lines it brings across the target's line ending.
+	IgnoredLineEndings bool
+}
+
+// How much whitespace Options.IgnoreWhitespace ignores.
+const (
+	WhitespaceNone     = "none"
+	WhitespaceTrailing = "trailing" // at the end of a line
+	WhitespaceAll      = "all"      // anywhere in a line; blank lines still count
+)
+
+// Options says what a comparison treats as not being a difference. It only
+// affects which lines count as equal: a diff always holds the original text.
+type Options struct {
+	IgnoreLineEndings bool   // treat CRLF and LF as the same
+	IgnoreWhitespace  string // WhitespaceNone (or empty), WhitespaceTrailing or WhitespaceAll
+}
+
+func (o Options) ignoresWhitespace() bool {
+	return o.IgnoreWhitespace == WhitespaceTrailing || o.IgnoreWhitespace == WhitespaceAll
+}
+
+// Describe says what's being ignored, for showing to the user, or "" if nothing is.
+func (o Options) Describe() string {
+	var parts []string
+	if o.ignoresWhitespace() {
+		parts = append(parts, "whitespace")
+	}
+	if o.IgnoreLineEndings {
+		parts = append(parts, "line endings")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// key returns what line is compared by.
+func (o Options) key(line string) string {
+	if !o.IgnoreLineEndings && !o.ignoresWhitespace() {
+		return line
+	}
+	body, ending := line, ""
+	if strings.HasSuffix(body, "\r") {
+		body = body[:len(body)-1]
+		if !o.IgnoreLineEndings {
+			ending = "\r"
+		}
+	}
+	switch o.IgnoreWhitespace {
+	case WhitespaceTrailing:
+		body = strings.TrimRight(body, " \t")
+	case WhitespaceAll:
+		body = strings.Join(strings.Fields(body), "")
+	}
+	return body + ending
+}
+
+// Same reports whether two contents have no differences under these options.
+func (o Options) Same(left, right string) bool {
+	if left == right {
+		return true
+	}
+	if o.Describe() == "" {
+		return false
+	}
+	l, r := splitLines(left), splitLines(right)
+	if len(l) != len(r) {
+		return false
+	}
+	for i := range l {
+		if o.key(l[i]) != o.key(r[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// splitLines splits content into lines, without the empty string that
+// strings.Split gives after a final newline.
+func splitLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 // Differ handles file comparison operations
-type Differ struct{}
+type Differ struct {
+	opts Options
+}
 
-// New creates a new Differ instance
+// New creates a Differ that treats any change as a difference.
 func New() *Differ {
 	return &Differ{}
+}
+
+// NewWithOptions creates a Differ that ignores what opts says to.
+func NewWithOptions(opts Options) *Differ {
+	return &Differ{opts: opts}
 }
 
 // CompareFiles compares two files and returns a structured diff
@@ -138,9 +232,10 @@ func (d *Differ) CompareStrings(leftPath, rightPath, leftContent, rightContent s
 // chunks, no spurious empty entries.
 func (d *Differ) compareLines(leftPath, rightPath string, leftLines, rightLines []string) *FileDiff {
 	diff := &FileDiff{
-		LeftFile:  leftPath,
-		RightFile: rightPath,
-		Lines:     make([]DiffLine, 0),
+		LeftFile:           leftPath,
+		RightFile:          rightPath,
+		Lines:              make([]DiffLine, 0),
+		IgnoredLineEndings: d.opts.IgnoreLineEndings,
 	}
 
 	// Drop the trailing empty string that strings.Split produces for
@@ -153,7 +248,7 @@ func (d *Differ) compareLines(leftPath, rightPath string, leftLines, rightLines 
 	}
 
 	m, n := len(leftLines), len(rightLines)
-	matches := lcsMatches(leftLines, rightLines)
+	matches := lcsMatches(d.keys(leftLines), d.keys(rightLines))
 
 	leftLineNum := 1
 	rightLineNum := 1
@@ -193,6 +288,7 @@ func (d *Differ) compareLines(leftPath, rightPath string, leftLines, rightLines 
 		diff.Lines = append(diff.Lines, DiffLine{
 			Type:         DiffEqual,
 			Content:      leftLines[li],
+			RightContent: rightLines[ri],
 			LineNum:      leftLineNum,
 			LeftLineNum:  leftLineNum,
 			RightLineNum: rightLineNum,
@@ -230,6 +326,18 @@ func (d *Differ) compareLines(leftPath, rightPath string, leftLines, rightLines 
 	}
 
 	return diff
+}
+
+// keys returns what each line is compared by.
+func (d *Differ) keys(lines []string) []string {
+	if d.opts.Describe() == "" {
+		return lines
+	}
+	keys := make([]string, len(lines))
+	for i, line := range lines {
+		keys[i] = d.opts.key(line)
+	}
+	return keys
 }
 
 // lcsMatches returns the matched (leftIndex, rightIndex) pairs from the

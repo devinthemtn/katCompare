@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"katcompare/internal/config"
 	"katcompare/internal/differ"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -312,6 +313,17 @@ func TestUntickedLinesStayReadable(t *testing.T) {
 	press(t, m, "enter", "m", "n")
 	if view := m.View(); !strings.Contains(view, "[ ]") || !strings.Contains(view, "old") || !strings.Contains(view, "new") {
 		t.Errorf("unticked lines should still show their text:\n%s", view)
+	}
+}
+
+func TestHelpShowsTheSettingsFile(t *testing.T) {
+	path, err := config.Path()
+	if err != nil {
+		t.Skip(err)
+	}
+	m := New()
+	if !strings.Contains(m.renderHelpBody(), path) {
+		t.Errorf("help doesn't show %q", path)
 	}
 }
 
@@ -750,5 +762,202 @@ func TestEveryViewFitsTheTerminal(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// compareDirs compares two folders the way the open screen does.
+func compareDirs(t *testing.T, leftFiles, rightFiles map[string]string) (m *Model, left, right string) {
+	t.Helper()
+	dir := t.TempDir()
+	left, right = filepath.Join(dir, "left"), filepath.Join(dir, "right")
+	if err := os.MkdirAll(left, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(right, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, left, leftFiles)
+	writeTree(t, right, rightFiles)
+	m = New()
+	m.windowWidth, m.windowHeight = 120, 34
+	m.SetLeftPath(left)
+	m.SetRightPath(right)
+	m.OpenDiffIfFiles()
+	return m, left, right
+}
+
+func TestConfigIgnoreAndHidden(t *testing.T) {
+	files := map[string]string{
+		"a.txt": "a\n", "b.log": "b\n", ".env": "x\n", ".git/config": "x\n", "node_modules/m.js": "m\n", "src/node_modules/n.js": "n\n",
+	}
+	m, _, _ := compareDirs(t, files, files)
+	if len(m.allFiles) != 4 { // a, b, and both node_modules files
+		t.Errorf("default: %d files", len(m.allFiles))
+	}
+
+	writeConfig(t, "[compare]\nignore = [\"node_modules\", \"*.log\"]\n")
+	m, _, _ = compareDirs(t, files, files)
+	if len(m.allFiles) != 1 || m.allFiles["a.txt"] == nil {
+		t.Errorf("ignore: %v", m.getSortedFiles())
+	}
+
+	writeConfig(t, "[compare]\nshow_hidden = true\nignore = [\"node_modules\", \"*.log\"]\n")
+	m, _, _ = compareDirs(t, files, files)
+	if m.allFiles[".env"] == nil || m.allFiles[".git/config"] != nil {
+		t.Errorf("show_hidden: %v", m.getSortedFiles())
+	}
+}
+
+func TestConfigAppliesOnReloadAndOnCompare(t *testing.T) {
+	files := map[string]string{"a.txt": "a\n", "b.log": "b\n"}
+	m, _, _ := compareDirs(t, files, files)
+	if len(m.allFiles) != 2 {
+		t.Fatalf("%d files", len(m.allFiles))
+	}
+	writeConfig(t, "[compare]\nignore = [\"*.log\"]\n")
+	press(t, m, "r")
+	if len(m.allFiles) != 1 {
+		t.Errorf("after reload: %v", m.getSortedFiles())
+	}
+}
+
+func TestConfigHideIdentical(t *testing.T) {
+	writeConfig(t, "[compare]\nhide_identical = true\n")
+	m, left, _ := compareDirs(t,
+		map[string]string{"same.txt": "s\n", "diff.txt": "a\n", "only.txt": "o\n"},
+		map[string]string{"same.txt": "s\n", "diff.txt": "b\n"})
+	if m.allFiles["same.txt"] != nil || m.allFiles["diff.txt"] == nil || m.allFiles["only.txt"] == nil {
+		t.Fatalf("list: %v", m.getSortedFiles())
+	}
+	if !strings.Contains(m.View(), "1 identical hidden") {
+		t.Errorf("no hidden count:\n%s", m.View())
+	}
+
+	// A file that a merge just made identical keeps its row, with its status.
+	m.selectedFile = "diff.txt"
+	press(t, m, "enter", "m", "s")
+	if readFile(t, filepath.Join(left, "diff.txt")) != "b\n" {
+		t.Fatalf("merge didn't save: %q", m.errorMsg)
+	}
+	if m.allFiles["diff.txt"] == nil {
+		t.Errorf("the merged file lost its row: %v", m.getSortedFiles())
+	}
+
+	// All identical says so.
+	m, _, _ = compareDirs(t, map[string]string{"s.txt": "s\n"}, map[string]string{"s.txt": "s\n"})
+	if !strings.Contains(m.View(), "All 1 file identical") {
+		t.Errorf("all identical:\n%s", m.View())
+	}
+
+	// Comparing two single files always shows them.
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"l.txt": "s\n", "r.txt": "s\n"})
+	m = New()
+	m.windowWidth, m.windowHeight = 120, 34
+	m.SetLeftPath(filepath.Join(dir, "l.txt"))
+	m.SetRightPath(filepath.Join(dir, "r.txt"))
+	m.OpenDiffIfFiles()
+	if len(m.allFiles) != 1 || m.viewMode != ViewModeDiff {
+		t.Errorf("two files: %d rows, view %v", len(m.allFiles), m.viewMode)
+	}
+}
+
+func TestConfigIgnoreLineEndingsAndWhitespace(t *testing.T) {
+	left := map[string]string{"crlf.txt": "a\r\nb\r\n", "ws.txt": "  a b\n", "real.txt": "x\n"}
+	right := map[string]string{"crlf.txt": "a\nb\n", "ws.txt": "a b  \n", "real.txt": "y\n"}
+
+	// Off: all three differ.
+	m, _, _ := compareDirs(t, left, right)
+	if m.differCount != 3 {
+		t.Errorf("default: %d differ", m.differCount)
+	}
+	if strings.Contains(m.View(), "ignoring") {
+		t.Errorf("no ignore setting, but the view mentions one:\n%s", m.View())
+	}
+
+	writeConfig(t, "[compare]\nignore_line_endings = true\nignore_whitespace = \"all\"\n")
+	m, _, _ = compareDirs(t, left, right)
+	if m.differCount != 1 {
+		t.Errorf("ignoring: %d differ", m.differCount)
+	}
+	m.selectedFile = "crlf.txt"
+	press(t, m, "enter")
+	if !strings.Contains(m.View(), "ignoring whitespace, line endings") {
+		t.Errorf("a file showing as the same must say why:\n%s", m.View())
+	}
+	if _, ins, del := m.currentDiff.GetStats(); ins != 0 || del != 0 {
+		t.Errorf("diff shows +%d -%d", ins, del)
+	}
+	press(t, m, "m")
+	if m.viewMode == ViewModeMerge || !strings.Contains(m.errorMsg, "when ignoring") {
+		t.Errorf("merge on a same-when-ignoring file: view %v, err %q", m.viewMode, m.errorMsg)
+	}
+}
+
+func TestConfigMergeKeepsBytesThroughTheTUI(t *testing.T) {
+	writeConfig(t, "[compare]\nignore_whitespace = \"all\"\n[view]\ndefault_merge_target = \"right\"\n")
+	m, _, right := compareDirs(t,
+		map[string]string{"f.txt": "keep\nold\n"},
+		map[string]string{"f.txt": "  k e e p  \nnew\n"})
+	m.selectedFile = "f.txt"
+	press(t, m, "enter", "m", "s")
+	if got := readFile(t, filepath.Join(right, "f.txt")); got != "  k e e p  \nold\n" {
+		t.Errorf("right = %q: the unchanged line lost its spacing", got)
+	}
+}
+
+// Merge selections are line numbers, so changing the settings while the merge
+// view is open must not change what gets saved.
+func TestConfigEditDuringMergeDoesNotChangeTheSave(t *testing.T) {
+	m, left, _ := compareDirs(t,
+		map[string]string{"f.txt": "a\n  b\nold\n"},
+		map[string]string{"f.txt": "a\nb\nnew\n"})
+	m.selectedFile = "f.txt"
+	press(t, m, "enter", "m") // two changes: "  b" and "old"
+
+	writeConfig(t, "[compare]\nignore_whitespace = \"all\"\nignore = [\"*\"]\n")
+	press(t, m, "s")
+	if got := readFile(t, filepath.Join(left, "f.txt")); got != "a\nb\nnew\n" {
+		t.Errorf("saved %q, want what was on screen applied", got)
+	}
+}
+
+func TestConfigEditorIsUsed(t *testing.T) {
+	writeConfig(t, "[tools]\neditor = \"definitely-not-installed-editor\"\n")
+	m, _, _ := compareDirs(t, map[string]string{"f.txt": "a\n"}, map[string]string{"f.txt": "b\n"})
+	press(t, m, "enter", "e")
+	if !strings.Contains(m.errorMsg, "definitely-not-installed-editor") {
+		t.Errorf("err = %q, want it to name the missing editor", m.errorMsg)
+	}
+}
+
+func TestConfigDefaultViewAndTarget(t *testing.T) {
+	if m := New(); m.diffViewMode != DiffViewUnified || m.mergeTarget != "left" {
+		t.Errorf("defaults: view %v, target %q", m.diffViewMode, m.mergeTarget)
+	}
+	writeConfig(t, "[view]\ndefault_view = \"sidebyside\"\ndefault_merge_target = \"right\"\n")
+	if m := New(); m.diffViewMode != DiffViewSideBySide || m.mergeTarget != "right" {
+		t.Errorf("set: view %v, target %q", m.diffViewMode, m.mergeTarget)
+	}
+}
+
+func TestConfigProblemIsShown(t *testing.T) {
+	writeConfig(t, "[compare]\nignore_whitespace = \"some\"\nignore = [\"*.txt\"]\n")
+	m, _, _ := compareDirs(t, map[string]string{"f.txt": "a\n"}, map[string]string{"f.txt": "b\n"})
+	if !strings.Contains(m.View(), "Using default settings") {
+		t.Errorf("no warning:\n%s", m.View())
+	}
+	if m.allFiles["f.txt"] == nil {
+		t.Error("a bad file should give all defaults, ignoring nothing")
+	}
+	press(t, m, "j") // the warning stays until it's fixed, not just until a key
+	if !strings.Contains(m.View(), "Using default settings") {
+		t.Errorf("warning went away:\n%s", m.View())
+	}
+	writeConfig(t, "")
+	press(t, m, "r")
+	press(t, m, "j")
+	if strings.Contains(m.View(), "Using default settings") {
+		t.Errorf("warning should clear once fixed:\n%s", m.View())
 	}
 }

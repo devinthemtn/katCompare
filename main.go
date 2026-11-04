@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"katcompare/internal/config"
 	"katcompare/internal/git"
 	"katcompare/internal/ui"
 
@@ -35,6 +36,9 @@ func main() {
 		fmt.Printf("katcmp %s\n", ui.Version)
 		return
 	}
+
+	// Without the file the app runs on the defaults, so a failure here isn't fatal.
+	config.Install() //nolint:errcheck
 
 	if len(args) >= 1 && args[0] == "--git" {
 		// Git mode: compare refs or ref vs working tree
@@ -133,6 +137,10 @@ Getting around (press ? in the app for every key):
   o / Ctrl+G       Change the paths / compare git refs
   ?                Help (F1 on the open screen)
   q / Ctrl+C       Quit (Ctrl+C on the open screen, where q types a q)
+
+Settings:
+  Kept in config.toml, created the first time the app runs. Press ? in the app
+  to see where.
 
 Colors:
   Blue background:  Added lines (+)

@@ -490,6 +490,9 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 }
 
 .content-title {
+    /* Shrinks a long path rather than pushing the stats onto their own row */
+    flex: 1 1 300px;
+    min-width: 0;
     font-weight: 800;
     font-size: 14px;
     overflow: hidden;
@@ -515,6 +518,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .stat-equal { color: var(--text-faint); }
 .stat-insert { color: var(--blue); }
 .stat-delete { color: var(--red); }
+.stat-ignoring { color: var(--yellow); }
 
 .content-actions {
     display: flex;
@@ -598,7 +602,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     overflow: auto;
     min-height: 0;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 12.5px;
+    font-size: var(--diff-font-size, 12.5px); /* diff_font_size in the config file */
 }
 
 /* The change block last jumped to with Next/Prev change */
@@ -711,6 +715,8 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
     background: var(--bg-panel);
+    /* Not the diff's text, so diff_font_size doesn't resize it */
+    font-size: 12.5px;
     /* Stays in view while the lines scroll beneath it */
     position: sticky;
     top: 0;
@@ -718,6 +724,170 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 }
 
 .merge-toolbar.scrolls-away { position: static; }
+
+/* ---- Collapsing: more room for the diff ---- */
+
+.paths-slim,
+.files-rail {
+    display: none;
+}
+
+#app.paths-collapsed .mode-tabs,
+#app.paths-collapsed .path-form,
+#app.paths-collapsed .git-form,
+#app.files-collapsed .sidebar {
+    display: none;
+}
+
+#app.paths-collapsed .topbar {
+    padding: 5px 16px;
+}
+
+#app.paths-collapsed .paths-slim {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.paths-slim-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.paths-slim .help-btn {
+    margin-left: 0;
+    width: var(--control-h-sm);
+    height: var(--control-h-sm);
+    padding: 0;
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+/* In focus the slim row goes too; Edit paths and Help are under More. A failed
+   Compare leaves the bar expanded, so this doesn't hide it. */
+#app.focus-mode.paths-collapsed .topbar {
+    display: none;
+}
+
+.collapse-btn {
+    flex-shrink: 0;
+    width: var(--control-h-sm);
+    height: var(--control-h-sm);
+    padding: 0;
+}
+
+#app.files-collapsed .files-rail {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 22px;
+    padding: 10px 0 0;
+    background: var(--bg-panel);
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+.files-rail:hover {
+    background: var(--bg-elevated);
+    color: var(--text);
+}
+
+/* Next/previous file, shown when the file list is hidden */
+.file-nav {
+    flex-shrink: 0;
+}
+
+.file-pos {
+    padding: 0 4px;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
+/* Focus: the file header and merge toolbar each fit one row where they can.
+   They still wrap in a narrow window, so no button becomes unreachable. */
+#app.focus-mode .content-header {
+    padding: 5px 12px;
+    gap: 10px;
+}
+
+#app.focus-mode .content-title {
+    flex: 0 1 auto;
+    min-width: 40px;
+}
+
+#app.focus-mode .content-title .path-sub {
+    display: none;
+}
+
+#app.focus-mode #change-nav {
+    margin-left: 0;
+}
+
+#app.focus-mode .content-actions {
+    flex: 1 1 0;
+    min-width: max-content;
+}
+
+#app.focus-mode .merge-toolbar {
+    padding: 5px 12px;
+    gap: 10px;
+}
+
+#app.focus-mode .selection-stats {
+    display: none;
+}
+
+/* The less common file actions, in focus */
+.more-menu {
+    position: relative;
+}
+
+.more-menu > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.more-menu > summary::-webkit-details-marker {
+    display: none;
+}
+
+.more-menu-panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 20;
+    padding: 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.more-menu-panel .external-actions {
+    flex-direction: column;
+    align-items: stretch;
+    white-space: nowrap;
+}
+
+.more-menu-panel .external-actions + .external-actions {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
 
 .merge-toolbar .stats {
     font-size: 12px;
@@ -1034,6 +1204,10 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border-radius: 50%;
     font-size: 13px;
     font-weight: 700;
+}
+
+.help-section dl + p {
+    margin-top: 12px;
 }
 
 .help-modal {

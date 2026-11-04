@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"katcompare/internal/config"
 	"katcompare/internal/differ"
 	"katcompare/internal/file"
 	"katcompare/internal/merge"
@@ -106,6 +107,9 @@ func (m *Model) renderFileRows(width int) []string {
 		if m.filterQuery != "" {
 			return append(rows, helpStyle.Render(" No files match"))
 		}
+		if m.hiddenIdentical > 0 {
+			return append(rows, helpStyle.Render(fmt.Sprintf(" All %s identical", plural(m.hiddenIdentical, "file"))))
+		}
 		return append(rows, helpStyle.Render(" No text files found"))
 	}
 
@@ -142,7 +146,7 @@ func (m *Model) fileBadge(relPath string) (icon string, style lipgloss.Style, sh
 	case file.SourceRight:
 		return "►", rightOnlyStyle, "right", "right only"
 	}
-	if comp.LeftFile.Content == comp.RightFile.Content {
+	if m.identical[relPath] {
 		return "✓", identicalStyle, "", ""
 	}
 	return "✗", differentStyle, "", ""
@@ -274,6 +278,7 @@ func (m *Model) renderDiffPane(w int) (string, []string) {
 	if m.hScrollOffset > 0 {
 		title += fmt.Sprintf(" · →%d", m.hScrollOffset)
 	}
+	title += m.ignoringNote()
 
 	var lines []string
 	if banner := m.renderStatusBanner(w); banner != "" {
@@ -285,6 +290,15 @@ func (m *Model) renderDiffPane(w int) (string, []string) {
 		lines = append(lines, m.renderUnifiedRows(w, m.diffViewHeight())...)
 	}
 	return title, lines
+}
+
+// ignoringNote says what the diff is ignoring, so that a file showing as the
+// same can't be mistaken for one with identical bytes.
+func (m *Model) ignoringNote() string {
+	if ignoring := m.diffOpts.Describe(); ignoring != "" {
+		return " · ignoring " + ignoring
+	}
+	return ""
 }
 
 // cursorMark is the marker for a row, hidden while the file list has focus.
@@ -379,7 +393,7 @@ func saveEffect(selIns, selDel int, target, name string) string {
 func (m *Model) renderMergePane(w int) (string, []string) {
 	name := sanitizeLine(m.displayNameForFile(m.selectedFile))
 	targetName := sanitizeLine(filepath.Base(m.editablePath(m.mergeTarget)))
-	title := "Merge · " + name
+	title := "Merge · " + name + m.ignoringNote()
 
 	var lines []string
 	if banner := m.renderStatusBanner(w); banner != "" {
@@ -707,8 +721,8 @@ External tools
   As a diff tool (WSL)   Other programs should run: katcmp-win --wait
                          (see katcmp-win --help)
 
-Config files
-  katcmp has no config file of its own; tools are read from git config:
+Tool choices
+  These are read from git config:
   Global                 ~/.gitconfig or ~/.config/git/config
                          (Windows: %USERPROFILE%\.gitconfig)
   Per repository         <repo>/.git/config (overrides global)
@@ -738,5 +752,13 @@ func (m *Model) renderHelpBody() string {
 	b.WriteString("\nDiff colors\n")
 	b.WriteString("  " + insertLineStyle.Render(" + Added line ") + "  " + deleteLineStyle.Render(" - Deleted line ") + "  " + unselectedInsertStyle.Render(" Unticked + ") + " " + unselectedDeleteStyle.Render(" Unticked - ") + "\n")
 	b.WriteString(helpTextEnd)
+	b.WriteString("\n\nSettings file\n")
+	if path, err := config.Path(); err == nil {
+		b.WriteString("  " + path + "\n")
+	}
+	b.WriteString("  Created the first time the app runs, and never changed after that. Edits\n")
+	b.WriteString("  apply on your next comparison. It sets files to skip, what to ignore when\n")
+	b.WriteString("  comparing, your editor, and the view and merge target to start with. The\n")
+	b.WriteString("  file's comments explain each one, and the README lists them.")
 	return b.String()
 }
