@@ -711,7 +711,13 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
     background: var(--bg-panel);
+    /* Stays in view while the lines scroll beneath it */
+    position: sticky;
+    top: 0;
+    z-index: 1;
 }
+
+.merge-toolbar.scrolls-away { position: static; }
 
 .merge-toolbar .stats {
     font-size: 12px;
