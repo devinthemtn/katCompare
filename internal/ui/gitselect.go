@@ -69,8 +69,10 @@ func (m *Model) handleGitSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.gitSelIndex >= 0 {
 			m.gitSelIndex = -1
-		} else {
+		} else if len(m.allFiles) > 0 {
 			m.viewMode = ViewModeFileSelect
+		} else {
+			m.viewMode = ViewModeOpen
 		}
 
 	case "tab", "shift+tab":
@@ -104,10 +106,7 @@ func (m *Model) handleGitSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.runGitSelect()
 
 	case "backspace":
-		in := m.gitSelInput[m.gitSelFocus]
-		if len(in) > 0 {
-			m.gitSelInput[m.gitSelFocus] = in[:len(in)-1]
-		}
+		m.gitSelInput[m.gitSelFocus] = dropLastRune(m.gitSelInput[m.gitSelFocus])
 		m.gitSelEdited = true
 		m.gitSelIndex = -1
 
@@ -117,8 +116,8 @@ func (m *Model) handleGitSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.gitSelIndex = -1
 
 	default:
-		if len(msg.Runes) > 0 && msg.Type == tea.KeyRunes {
-			m.gitSelInput[m.gitSelFocus] += string(msg.Runes)
+		if text, ok := textOf(msg); ok {
+			m.gitSelInput[m.gitSelFocus] += text
 			m.gitSelEdited = true
 			m.gitSelIndex = -1
 		}
@@ -138,8 +137,7 @@ func (m *Model) runGitSelect() {
 		m.errorMsg = err.Error()
 		return
 	}
-	m.focus = focusViewDiffBtn
-	m.viewMode = ViewModeFileSelect
+	m.ShowFileList()
 }
 
 // gitSelListHeight is the number of dropdown rows that fit on screen.
@@ -152,7 +150,7 @@ func (m *Model) gitSelListHeight() int {
 func (m *Model) renderGitSelectView() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Width(m.windowWidth - 2).Render("Git Comparison - choose refs"))
+	b.WriteString(titleStyle.Render(fitCell(" katCompare  Compare git refs", m.windowWidth)))
 	b.WriteString("\n\n")
 
 	inputWidth := max(30, m.windowWidth-20)
@@ -162,14 +160,11 @@ func (m *Model) renderGitSelectView() string {
 		if display == "" && side == 1 && m.gitSelFocus != 1 {
 			display = "(working tree)"
 		}
-		if len(display) > inputWidth-2 {
-			display = "..." + display[len(display)-inputWidth+5:]
-		}
 		var input string
 		if m.gitSelFocus == side {
-			input = focusedInputStyle.Width(inputWidth).Render(display + "│")
+			input = focusedInputStyle.Render(fitCell(" "+truncatePath(sanitizeLine(display)+"│", inputWidth-2)+" ", inputWidth))
 		} else {
-			input = inputStyle.Width(inputWidth).Render(display)
+			input = inputStyle.Render(fitCell(" "+truncatePath(sanitizeLine(display), inputWidth-2)+" ", inputWidth))
 		}
 		b.WriteString(labels[side] + input)
 		b.WriteString("\n")
@@ -181,18 +176,13 @@ func (m *Model) renderGitSelectView() string {
 
 	if m.errorMsg != "" {
 		b.WriteString("\n")
-		b.WriteString(errorStyle.Width(m.windowWidth - 4).Render("Error: " + m.errorMsg))
+		b.WriteString(errorStyle.Render(truncate(" "+sanitizeLine(m.errorMsg), m.windowWidth)))
 		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
-	var helpText string
-	if m.windowWidth > 100 {
-		helpText = "Type a ref or filter • ↑↓: Choose • Enter: Accept choice / Compare • Tab: Switch side • Ctrl+U: Clear • Esc: Back"
-	} else {
-		helpText = "↑↓:Choose Enter:Accept/Compare Tab:Side Esc:Back"
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth - 2).Render(helpText))
+	b.WriteString(renderKeys(m.windowWidth, key{"Type", "ref or filter"}, key{"↑↓", "choose"}, key{"Enter", "accept / compare"},
+		key{"Tab", "side"}, key{"Ctrl+U", "clear"}, key{"Esc", "back"}))
 
 	return b.String()
 }
@@ -205,7 +195,7 @@ func (m *Model) renderGitSelDropdown() string {
 		return suggestionStyle.Render(helpStyle.Render("No matching refs - Enter compares the typed ref"))
 	}
 
-	groupStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4")).Bold(true)
+	groupStyle := lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 	labelWidth := max(20, m.windowWidth-12)
 
 	// Flatten into rows with a header before each group; remember which row
@@ -218,10 +208,7 @@ func (m *Model) renderGitSelDropdown() string {
 			group = o.Group
 			rows = append(rows, groupStyle.Render(group))
 		}
-		label := o.Label
-		if len(label) > labelWidth {
-			label = label[:labelWidth-3] + "..."
-		}
+		label := truncate(sanitizeLine(o.Label), labelWidth)
 		if i == m.gitSelIndex {
 			selRow = len(rows)
 			rows = append(rows, selectedSuggestionStyle.Render("▶ "+label))

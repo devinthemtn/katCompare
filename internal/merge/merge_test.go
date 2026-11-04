@@ -393,3 +393,82 @@ func TestSaveKeepsLineEndings(t *testing.T) {
 		}
 	}
 }
+
+func TestTracker(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/f.txt"
+	if err := os.WriteFile(path, []byte("old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tracker := NewTracker()
+	if tracker.StatusOf(path) != nil {
+		t.Error("status before any save")
+	}
+
+	report, err := SaveVerified(path, "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker.Record(path, &Record{Report: report, Kind: KindMerge, Applied: 1})
+
+	rec := tracker.StatusOf("", path)
+	if rec == nil || rec.State() != StateSafe || rec.Target != "f.txt" {
+		t.Fatalf("status after save = %+v", rec)
+	}
+	backups := tracker.Backups()
+	if !AllBackups([]string{report.Backup}, backups) {
+		t.Errorf("backups = %v", backups)
+	}
+	if AllBackups([]string{report.Backup, ""}, backups) || AllBackups(nil, backups) {
+		t.Error("a side that isn't a file, or no sides, shouldn't count as a backup")
+	}
+	if got := tracker.SavedUnder(dir); len(got) != 1 || got[0] != "f.txt" {
+		t.Errorf("SavedUnder = %v", got)
+	}
+	if got := tracker.SavedUnder(t.TempDir()); len(got) != 0 {
+		t.Errorf("SavedUnder another dir = %v", got)
+	}
+
+	// A check beats a safe save when both sides have one.
+	other := dir + "/g.txt"
+	if err := os.WriteFile(other, []byte("old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	report, err = SaveVerified(other, "<<<<<<< HEAD\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker.Record(other, &Record{Report: report, Kind: KindConflicts})
+	if rec := tracker.StatusOf(path, other); rec == nil || rec.State() != StateCheck {
+		t.Errorf("status of both = %+v, want check", rec)
+	}
+
+	// An outside edit forgets the save.
+	if err := os.WriteFile(path, []byte("edited\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if tracker.StatusOf(path) != nil {
+		t.Error("status should clear when the file changes")
+	}
+	if tracker.Backups()[path+".orig"] {
+		t.Error("backup should stop being hidden once its save is forgotten")
+	}
+}
+
+func TestDiskState(t *testing.T) {
+	path := t.TempDir() + "/f.txt"
+	if err := os.WriteFile(path, []byte("a\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ loaded, want string }{{"a\n", DiskUnchanged}, {"b\n", DiskChanged}} {
+		if got, err := DiskState(path, c.loaded); err != nil || got != c.want {
+			t.Errorf("DiskState(%q) = %q, %v; want %q", c.loaded, got, err, c.want)
+		}
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := DiskState(path, "a\n"); err != nil || got != DiskMissing {
+		t.Errorf("DiskState after removal = %q, %v", got, err)
+	}
+}

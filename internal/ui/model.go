@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"katcompare/internal/conflict"
 	"katcompare/internal/differ"
@@ -24,6 +25,8 @@ import (
 type ViewMode int
 
 const (
+	// ViewModeFileSelect and ViewModeDiff are the two panes of the main screen,
+	// and say which has focus. Merge and conflict views use the diff's pane.
 	ViewModeFileSelect ViewMode = iota
 	ViewModeDiff
 	ViewModeMerge
@@ -31,6 +34,7 @@ const (
 	ViewModeHelp
 	ViewModeGitSelect
 	ViewModeConflict
+	ViewModeOpen // choosing the paths to compare
 )
 
 // DiffViewMode represents the diff display mode
@@ -41,7 +45,7 @@ const (
 	DiffViewSideBySide
 )
 
-// fileSelectFocus represents which control has keyboard focus on the file select screen
+// fileSelectFocus represents which control has keyboard focus on the open screen
 type fileSelectFocus int
 
 const (
@@ -69,6 +73,10 @@ type Model struct {
 	fileListScroll int
 
 	// Diff view
+	diffFile      string // the file currentDiff belongs to
+	diffCache     map[string]*cachedDiff
+	diffGen       int // counts comparison loads; older background results are dropped
+	previewSeq    int // identifies the latest delayed diff load
 	currentDiff   *differ.FileDiff
 	sbsRows       []differ.SideBySideRow // precomputed side-by-side rows (cached from currentDiff)
 	scrollOffset  int
@@ -79,7 +87,8 @@ type Model struct {
 	// Merge view
 	changeSelection *merge.ChangeSelection
 	mergeTarget     string // "left" or "right"
-	mergePreview    string
+	targetDisk      string // the target on disk vs as loaded: merge.Disk*
+	overwriteArmed  bool   // warned about outside edits; the next s overwrites
 
 	// Conflict view: resolving git conflict markers in the selected file
 	conflictFile    *conflict.File
@@ -90,19 +99,25 @@ type Model struct {
 	copySelection map[string]bool // Maps relative path to whether to copy
 	copyTarget    string          // "to-left" or "to-right"
 
+	// Merge status: saves made this session, and what they mean for each file
+	tracker     *merge.Tracker
+	statuses    map[string]*merge.Record
+	differCount int
+
 	// Services
 	fileManager *file.Manager
 	differ      *differ.Differ
 	merger      *merge.Merger
 
 	// UI state
-	inputLeft   string
-	inputRight  string
-	focus       fileSelectFocus
-	showingHelp bool
-	helpScroll  int
-	errorMsg    string
-	statusMsg   string // success message, shown until the next key press
+	inputLeft  string
+	inputRight string
+	focus      fileSelectFocus
+	helpScroll int
+	helpReturn ViewMode // the view to go back to from help
+	errorMsg   string
+	statusMsg  string // result message, shown until the next key press
+	statusWarn bool   // statusMsg reports a problem to look at
 
 	// Path suggestions
 	leftSuggestions  []string
@@ -112,8 +127,8 @@ type Model struct {
 	showSuggestions  bool
 
 	// File list filter
-	filterQuery string
-	filterActive bool
+	filterQuery  string
+	filterTyping bool
 
 	// Git comparison (for reloading and launching git difftool/mergetool)
 	gitMode   bool
@@ -137,135 +152,145 @@ type externalDoneMsg struct {
 	err  error
 }
 
+// previewMsg loads the selected file's diff after a short delay, so moving
+// through a list of large files doesn't diff each one on the way past.
+type previewMsg struct{ seq int }
+
+// diffReadyMsg delivers a diff computed in the background.
+type diffReadyMsg struct {
+	relPath string
+	gen     int // the comparison it was computed from
+	cached  *cachedDiff
+}
+
+// previewDelay and previewNoDelayBytes control when a diff load waits. Up to
+// the limit a diff takes well under the time between key repeats; past it, it
+// can take seconds, so it runs in the background.
+const (
+	previewDelay        = 80 * time.Millisecond
+	previewNoDelayBytes = 128 * 1024
+)
+
+// cachedDiff is a computed diff, kept until the next reload.
+type cachedDiff struct {
+	diff *differ.FileDiff
+	rows []differ.SideBySideRow
+}
+
 // Version is the build version shown in the help screen; set by main.
 var Version = "dev"
 
-// Styles for the UI
+// Styles for the UI. Colors adapt to light and dark terminals.
 var (
+	accentColor = lipgloss.Color("#7D56F4")
+	mutedColor  = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"}
+	greenColor  = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
+	yellowColor = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#FACC15"}
+	blueColor   = lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#60A5FA"}
+	orangeColor = lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FB923C"}
+	redColor    = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
+
 	titleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#7D56F4")).
-			Padding(0, 1).
+			Background(accentColor).
 			Bold(true)
 
-	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#555555")).
-			Padding(0, 1)
+	headerBarStyle = titleStyle
+
+	paneBorderStyle        = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9CA3AF", Dark: "#4B5563"})
+	paneFocusedBorderStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 
 	inputStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#000000")).
-			Background(lipgloss.Color("#FFFFFF")).
-			Padding(0, 1)
+			Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F3F4F6"}).
+			Background(lipgloss.AdaptiveColor{Light: "#E5E7EB", Dark: "#374151"})
 
 	focusedInputStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#000000")).
-				Background(lipgloss.Color("#FFFF00")).
-				Padding(0, 1)
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Background(accentColor)
 
-	// Single-line "badge" buttons - deliberately not bordered, since a border
-	// costs two extra rows and the file-select screen is already tight on
-	// vertical space (the file list box reserves most of the terminal height).
 	buttonStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#DDDDDD")).
-			Background(lipgloss.Color("#444444")).
+			Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#E5E7EB"}).
+			Background(lipgloss.AdaptiveColor{Light: "#E5E7EB", Dark: "#374151"}).
 			Bold(true).
 			Padding(0, 2)
 
 	focusedButtonStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#000000")).
-				Background(lipgloss.Color("#FFFF00")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Background(accentColor).
 				Bold(true).
 				Padding(0, 2)
 
-	equalLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888"))
+	equalLineStyle = lipgloss.NewStyle().Foreground(mutedColor)
 
 	insertLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#0000FF")).
-			Bold(true)
+			Foreground(lipgloss.AdaptiveColor{Light: "#1E3A8A", Dark: "#DBEAFE"}).
+			Background(lipgloss.AdaptiveColor{Light: "#DBEAFE", Dark: "#1E3A5F"})
 
 	deleteLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#FF0000")).
-			Bold(true)
+			Foreground(lipgloss.AdaptiveColor{Light: "#7F1D1D", Dark: "#FECACA"}).
+			Background(lipgloss.AdaptiveColor{Light: "#FEE2E2", Dark: "#5B1F24"})
 
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#FF0000")).
-			Padding(0, 1).
-			Bold(true)
+	errorStyle = lipgloss.NewStyle().Foreground(redColor).Bold(true)
+	warnStyle  = lipgloss.NewStyle().Foreground(yellowColor).Bold(true)
 
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
-			Italic(true)
+	helpStyle = lipgloss.NewStyle().Foreground(mutedColor).Italic(true)
 
-	fileListStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#7D56F4")).
-			Padding(1)
+	keyNameStyle   = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	keyActionStyle = lipgloss.NewStyle().Foreground(mutedColor)
 
 	selectedFileStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#7D56F4")).
+				Background(accentColor).
 				Foreground(lipgloss.Color("#FFFFFF")).
 				Bold(true)
 
+	selectedDimStyle = lipgloss.NewStyle().
+				Background(lipgloss.AdaptiveColor{Light: "#E5E7EB", Dark: "#374151"}).
+				Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F3F4F6"})
+
+	selectedSuggestionStyle = selectedDimStyle
+
 	suggestionStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#888888")).
-			Padding(0, 1).
-			MaxWidth(80)
-
-	selectedSuggestionStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#DDDDDD")).
-				Foreground(lipgloss.Color("#000000"))
+			BorderForeground(mutedColor).
+			Padding(0, 1)
 
 	// Empty cell in side-by-side view (the blank side of an insert or delete row)
 	emptyDiffStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#444444")).
-			Background(lipgloss.Color("#111111"))
+			Foreground(mutedColor).
+			Background(lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#1F2937"})
 
-	// Merge mode styles
-	mergeHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FAFAFA")).
-				Background(lipgloss.Color("#00AA00")).
-				Padding(0, 1).
-				Bold(true)
+	unsavedStyle = lipgloss.NewStyle().Foreground(blueColor).Bold(true)
 
-	selectedChangeStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#FFFF00")).
-				Foreground(lipgloss.Color("#000000")).
-				Bold(true)
+	// A ticked change has its insert or delete background. An unticked one loses
+	// the background but keeps a matching text color, so it stays easy to read.
+	unselectedInsertStyle = lipgloss.NewStyle().Foreground(blueColor)
+	unselectedDeleteStyle = lipgloss.NewStyle().Foreground(redColor)
 
-	unselectedChangeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#666666")).
-				Strikethrough(true)
-
-	previewStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#00AA00")).
-			Padding(1)
+	// File list
+	identicalStyle = lipgloss.NewStyle().Foreground(greenColor)
+	differentStyle = lipgloss.NewStyle().Foreground(redColor).Bold(true)
+	leftOnlyStyle  = lipgloss.NewStyle().Foreground(blueColor).Bold(true)
+	rightOnlyStyle = lipgloss.NewStyle().Foreground(orangeColor).Bold(true)
 )
 
 // New creates a new model
 func New() *Model {
 	return &Model{
-		viewMode:        ViewModeFileSelect,
-		fileManager:     file.New(),
-		differ:          differ.New(),
-		merger:          merge.New(),
-		focus:           focusInputLeft,
-		commonFiles:     make(map[string][2]*file.FileInfo),
-		allFiles:        make(map[string]*file.FileComparison),
-		leftSuggIndex:   -1,
-		rightSuggIndex:  -1,
-		showSuggestions: false,
-		fileListScroll:  0,
-		mergeTarget:   "left",
-		copySelection: make(map[string]bool),
-		copyTarget:    "to-right",
-		diffViewMode:  DiffViewUnified,
+		viewMode:       ViewModeOpen,
+		fileManager:    file.New(),
+		differ:         differ.New(),
+		merger:         merge.New(),
+		tracker:        merge.NewTracker(),
+		focus:          focusInputLeft,
+		commonFiles:    make(map[string][2]*file.FileInfo),
+		allFiles:       make(map[string]*file.FileComparison),
+		leftSuggIndex:  -1,
+		rightSuggIndex: -1,
+		mergeTarget:    "left",
+		targetDisk:     merge.DiskUnchanged,
+		copySelection:  make(map[string]bool),
+		copyTarget:     "to-right",
+		diffViewMode:   DiffViewUnified,
 	}
 }
 
@@ -278,15 +303,69 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		first := m.windowWidth == 0
 		m.windowWidth = msg.Width
 		m.windowHeight = msg.Height
+		if m.browsing() {
+			m.ensureDiffLoaded()
+		}
+		if first && m.currentDiff != nil {
+			// Positioned before the size was known: put the change in view.
+			m.scrollOffset = max(0, m.cursor-m.diffViewHeight()/4)
+		}
+		return m, nil
+
+	case tea.FocusMsg:
+		// Back from another window: files may have changed.
+		m.refreshStatuses()
+		if m.viewMode == ViewModeMerge {
+			m.refreshTargetDisk()
+		}
 		return m, nil
 
 	case tea.KeyMsg:
+		// Keys pressed quickly can arrive as one message. Only a text field
+		// wants them together.
+		if msg.Type == tea.KeyRunes && !msg.Paste && len(msg.Runes) > 1 && !m.typingText() {
+			var cmds []tea.Cmd
+			for _, r := range msg.Runes {
+				_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: msg.Alt})
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
 		return m.handleKeyPress(msg)
 
 	case externalDoneMsg:
 		m.handleExternalDone(msg)
+		return m, nil
+
+	case previewMsg:
+		if msg.seq == m.previewSeq && m.browsing() && m.diffFile != m.selectedFile {
+			return m, m.computeDiffCmd(m.selectedFile)
+		}
+		return m, nil
+
+	case diffReadyMsg:
+		if msg.gen != m.diffGen {
+			return m, nil
+		}
+		if m.diffCache == nil {
+			m.diffCache = make(map[string]*cachedDiff)
+		}
+		m.diffCache[msg.relPath] = msg.cached
+		if msg.relPath == m.selectedFile && m.browsing() {
+			m.ensureDiffLoaded()
+		}
+		return m, nil
+
+	case copyDoneMsg:
+		m.viewMode = ViewModeFileSelect
+		m.reloadComparison()
+		if msg.err != "" {
+			m.errorMsg = msg.err
+		}
+		m.statusMsg = msg.text
 		return m, nil
 
 	case saveDoneMsg:
@@ -294,14 +373,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errorMsg = msg.err.Error()
 			return m, nil
 		}
-		// The target file changed: show the refreshed diff.
-		m.viewMode = ViewModeDiff
+		m.tracker.Record(msg.path, msg.record)
+		// The target file changed: show the refreshed diff, with nothing left
+		// to save.
 		m.reloadComparison()
+		if m.viewMode == ViewModeMerge {
+			m.changeSelection.SelectNone(m.currentDiff)
+			m.refreshTargetDisk()
+		}
 		m.statusMsg = msg.text
+		m.statusWarn = len(msg.record.Report.Issues) > 0
 		return m, nil
 	}
 
 	return m, nil
+}
+
+// typingText reports whether key presses are going into a text field.
+func (m *Model) typingText() bool {
+	switch m.viewMode {
+	case ViewModeOpen:
+		return m.focusedInput() != nil
+	case ViewModeGitSelect:
+		return true
+	case ViewModeFileSelect:
+		return m.filterTyping
+	}
+	return false
+}
+
+// browsing reports whether the file list and a right-hand pane are on screen.
+func (m *Model) browsing() bool {
+	switch m.viewMode {
+	case ViewModeFileSelect, ViewModeDiff, ViewModeMerge, ViewModeConflict:
+		return true
+	}
+	return false
 }
 
 // View renders the current view
@@ -312,31 +419,31 @@ func (m *Model) View() string {
 		return ""
 	}
 
+	var out string
 	switch m.viewMode {
-	case ViewModeFileSelect:
-		return m.renderFileSelectView()
-	case ViewModeDiff:
-		return m.renderDiffView()
-	case ViewModeMerge:
-		return m.renderMergeView()
+	case ViewModeOpen:
+		out = m.renderOpenView()
+	case ViewModeFileSelect, ViewModeDiff, ViewModeMerge, ViewModeConflict:
+		out = m.renderBrowseView()
 	case ViewModeCopy:
-		return m.renderCopyView()
+		out = m.renderCopyView()
 	case ViewModeHelp:
-		return m.renderHelpView()
+		out = m.renderHelpView()
 	case ViewModeGitSelect:
-		return m.renderGitSelectView()
-	case ViewModeConflict:
-		return m.renderConflictView()
+		out = m.renderGitSelectView()
 	default:
-		return "Unknown view mode"
+		out = "Unknown view mode"
 	}
+	return fit(out, m.windowWidth, m.windowHeight)
 }
 
 // handleKeyPress processes keyboard input
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.viewMode {
+	case ViewModeOpen:
+		return m.handleOpenKeys(msg)
 	case ViewModeFileSelect:
-		return m.handleFileSelectKeys(msg)
+		return m.handleFilesKeys(msg)
 	case ViewModeDiff:
 		return m.handleDiffKeys(msg)
 	case ViewModeMerge:
@@ -353,298 +460,537 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// canViewDiff reports whether there's a selected file the diff view can open
-func (m *Model) canViewDiff() bool {
-	return len(m.allFiles) > 0 && m.selectedFile != ""
+// clearMessages ends the messages shown until the next key press.
+func (m *Model) clearMessages() {
+	m.errorMsg, m.statusMsg, m.statusWarn = "", "", false
 }
 
-// openDiffForSelected loads the diff for the currently selected file (or the
-// first file if none is selected yet) and switches to the diff view.
-func (m *Model) openDiffForSelected() {
-	if len(m.allFiles) == 0 {
-		return
+// textOf returns the text a key press types, whether a single key or a paste,
+// and whether it typed anything at all.
+func textOf(msg tea.KeyMsg) (string, bool) {
+	if msg.Alt || (msg.Type != tea.KeyRunes && msg.Type != tea.KeySpace) {
+		return "", false
 	}
-	if m.selectedFile == "" {
-		files := m.getSortedFiles()
-		if len(files) > 0 {
-			m.selectedFile = files[0]
-		}
-	}
-	if m.selectedFile != "" {
-		m.loadDiff()
-		m.viewMode = ViewModeDiff
-	}
+	return strings.TrimRight(strings.ReplaceAll(string(msg.Runes), "\r", ""), "\n"), true
 }
 
-// handleFileSelectKeys handles keys in file selection mode
-func (m *Model) handleFileSelectKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) openHelp() {
+	m.helpReturn = m.viewMode
+	m.helpScroll = 0
+	m.viewMode = ViewModeHelp
+}
+
+// openPaths goes to the open screen.
+func (m *Model) openPaths() {
+	if m.gitMode {
+		m.inputLeft, m.inputRight = "", ""
+	}
+	m.focus = focusInputLeft
+	m.clearSuggestions()
+	m.viewMode = ViewModeOpen
+}
+
+// focusedInput returns the text field with focus, or nil on a button.
+func (m *Model) focusedInput() *string {
+	switch m.focus {
+	case focusInputLeft:
+		return &m.inputLeft
+	case focusInputRight:
+		return &m.inputRight
+	}
+	return nil
+}
+
+// handleOpenKeys handles keys on the open screen. Anything typed goes into the
+// focused field, so ordinary keys like q are only commands on the buttons.
+func (m *Model) handleOpenKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.clearMessages()
+	input := m.focusedInput()
+
+	if text, ok := textOf(msg); ok && input != nil {
+		*input += text
+		m.updateSuggestions()
+		return m, nil
+	}
+
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
-
-	case "ctrl+g":
-		m.openGitSelect()
-		return m, nil
-
-	case "tab":
-		// If suggestions are showing and we have suggestions, cycle through them
-		onInput := m.focus == focusInputLeft || m.focus == focusInputRight
-		if onInput && m.showSuggestions {
-			if m.focus == focusInputLeft && len(m.leftSuggestions) > 0 {
-				m.leftSuggIndex = (m.leftSuggIndex + 1) % len(m.leftSuggestions)
-				return m, nil
-			} else if m.focus == focusInputRight && len(m.rightSuggestions) > 0 {
-				m.rightSuggIndex = (m.rightSuggIndex + 1) % len(m.rightSuggestions)
-				return m, nil
-			}
-		}
-		// Cycle focus: left input -> right input -> view diff button (if available) -> quit button -> left input
-		switch m.focus {
-		case focusInputLeft:
-			m.focus = focusInputRight
-		case focusInputRight:
-			if m.canViewDiff() {
-				m.focus = focusViewDiffBtn
-			} else {
-				m.focus = focusQuitBtn
-			}
-		case focusViewDiffBtn:
-			m.focus = focusQuitBtn
-		case focusQuitBtn:
-			m.focus = focusInputLeft
-		}
-		m.clearSuggestions()
-		return m, nil
-
-	case "enter":
-		// If the quit button is focused, quit the app
-		if m.focus == focusQuitBtn {
+	case "q":
+		if input == nil {
 			return m, tea.Quit
 		}
-
-		// If the view diff button is focused, open the diff for the selected file
-		if m.focus == focusViewDiffBtn {
-			m.openDiffForSelected()
-			return m, nil
-		}
-
-		// If suggestions are showing, accept the selected suggestion. But if the
-		// suggestion is already an exact match for what's typed (e.g. the user
-		// typed a complete, valid filename), accepting it would be a no-op -
-		// fall through and load the path instead of silently swallowing Enter.
-		if m.showSuggestions {
-			if m.focus == focusInputLeft && len(m.leftSuggestions) > 0 && m.leftSuggIndex >= 0 {
-				suggestion := m.leftSuggestions[m.leftSuggIndex]
-				if suggestion != m.inputLeft {
-					m.inputLeft = suggestion
-					m.clearSuggestions()
-					return m, nil
-				}
-			} else if m.focus == focusInputRight && len(m.rightSuggestions) > 0 && m.rightSuggIndex >= 0 {
-				suggestion := m.rightSuggestions[m.rightSuggIndex]
-				if suggestion != m.inputRight {
-					m.inputRight = suggestion
-					m.clearSuggestions()
-					return m, nil
-				}
-			}
-		}
-
-		// Load the path
-		if m.focus == focusInputLeft {
-			if m.inputLeft != "" {
-				m.leftPath = m.inputLeft
-				m.loadLeftPath()
-			}
-		} else if m.focus == focusInputRight {
-			if m.inputRight != "" {
-				m.rightPath = m.inputRight
-				m.loadRightPath()
-			}
-		}
-		m.clearSuggestions()
-		m.updateCommonFiles()
-		return m, nil
-
+	case "?", "f1":
+		m.openHelp()
+	case "ctrl+g":
+		m.openGitSelect()
 	case "ctrl+d":
-		m.openDiffForSelected()
-		return m, nil
-
-	case "?":
-		m.viewMode = ViewModeHelp
-		return m, nil
-
-	case "backspace":
-		if m.filterActive {
-			if len(m.filterQuery) > 0 {
-				m.filterQuery = m.filterQuery[:len(m.filterQuery)-1]
-			}
-			return m, nil
+		m.comparePaths()
+	case "tab":
+		if !m.cycleSuggestion(1) {
+			m.moveFocus(1)
 		}
-		if m.focus == focusInputLeft {
-			if len(m.inputLeft) > 0 {
-				m.inputLeft = m.inputLeft[:len(m.inputLeft)-1]
-				m.updateSuggestions()
-			}
-		} else if m.focus == focusInputRight {
-			if len(m.inputRight) > 0 {
-				m.inputRight = m.inputRight[:len(m.inputRight)-1]
-				m.updateSuggestions()
-			}
-		}
-		return m, nil
-
-	case "esc":
-		if m.filterActive {
-			m.filterActive = false
-			m.filterQuery = ""
-			return m, nil
-		}
-		m.clearSuggestions()
-		return m, nil
-
+	case "shift+tab":
+		m.moveFocus(-1)
 	case "up":
-		if m.showSuggestions {
-			if m.focus == focusInputLeft && len(m.leftSuggestions) > 0 {
-				if m.leftSuggIndex <= 0 {
-					m.leftSuggIndex = len(m.leftSuggestions) - 1
-				} else {
-					m.leftSuggIndex--
-				}
-				return m, nil
-			} else if m.focus == focusInputRight && len(m.rightSuggestions) > 0 {
-				if m.rightSuggIndex <= 0 {
-					m.rightSuggIndex = len(m.rightSuggestions) - 1
-				} else {
-					m.rightSuggIndex--
-				}
-				return m, nil
-			}
-		}
-		if len(m.allFiles) > 0 {
-			m.selectPreviousFile()
-			// Only auto-load diff if we're in file selection mode
-			// In diff mode, user needs to press Ctrl+D or navigate with n/p
-		}
-		return m, nil
-
+		m.cycleSuggestion(-1)
 	case "down":
-		if m.showSuggestions {
-			if m.focus == focusInputLeft && len(m.leftSuggestions) > 0 {
-				m.leftSuggIndex = (m.leftSuggIndex + 1) % len(m.leftSuggestions)
-				return m, nil
-			} else if m.focus == focusInputRight && len(m.rightSuggestions) > 0 {
-				m.rightSuggIndex = (m.rightSuggIndex + 1) % len(m.rightSuggestions)
-				return m, nil
-			}
-		}
-		if len(m.allFiles) > 0 {
-			m.selectNextFile()
-			// Only auto-load diff if we're in file selection mode
-			// In diff mode, user needs to press Ctrl+D or navigate with n/p
-		}
-		return m, nil
-
-	case "/":
-		// Only steal "/" for the file-list filter once files are loaded and
-		// neither path input is focused; otherwise it's a normal path character.
-		if len(m.allFiles) > 0 && m.focus != focusInputLeft && m.focus != focusInputRight {
-			m.filterActive = true
-			m.filterQuery = ""
-			return m, nil
-		}
-		fallthrough
-
-	default:
-		if m.filterActive {
-			// Route all printable characters to the filter query
-			if len(msg.String()) == 1 {
-				m.filterQuery += msg.String()
-			}
-			return m, nil
-		}
-		if m.focus == focusQuitBtn {
-			// Space also activates the focused quit button, like enter
-			if msg.String() == " " {
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		if m.focus == focusViewDiffBtn {
-			// Space also activates the focused view diff button, like enter
-			if msg.String() == " " {
-				m.openDiffForSelected()
-			}
-			return m, nil
-		}
-		// Add character to appropriate input
-		if len(msg.String()) == 1 {
-			if m.focus == focusInputLeft {
-				m.inputLeft += msg.String()
-			} else if m.focus == focusInputRight {
-				m.inputRight += msg.String()
-			}
+		m.cycleSuggestion(1)
+	case "backspace":
+		if input != nil && *input != "" {
+			*input = dropLastRune(*input)
 			m.updateSuggestions()
 		}
-		return m, nil
+	case "esc":
+		if m.showSuggestions {
+			m.clearSuggestions()
+		} else if len(m.allFiles) > 0 {
+			m.viewMode = ViewModeFileSelect
+		}
+	case " ":
+		return m.pressOpenButton()
+	case "enter":
+		if input == nil {
+			return m.pressOpenButton()
+		}
+		if suggestion, ok := m.currentSuggestion(); ok && suggestion != *input {
+			*input = suggestion
+			m.clearSuggestions()
+			return m, nil
+		}
+		m.clearSuggestions()
+		other := m.inputRight
+		if m.focus == focusInputRight {
+			other = m.inputLeft
+		}
+		if *input != "" && other != "" {
+			m.comparePaths()
+		} else if *input != "" {
+			m.moveFocus(1)
+			if m.focus == focusViewDiffBtn { // on the right, with the left empty
+				m.focus = focusInputLeft
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) pressOpenButton() (tea.Model, tea.Cmd) {
+	switch m.focus {
+	case focusQuitBtn:
+		return m, tea.Quit
+	case focusViewDiffBtn:
+		m.comparePaths()
+	}
+	return m, nil
+}
+
+// moveFocus moves through left field, right field, Compare and Quit.
+func (m *Model) moveFocus(dir int) {
+	const controls = 4
+	m.focus = fileSelectFocus((int(m.focus) + dir + controls) % controls)
+	m.clearSuggestions()
+}
+
+// suggestionList returns the focused field's suggestions and their index.
+func (m *Model) suggestionList() ([]string, *int) {
+	if m.focus == focusInputRight {
+		return m.rightSuggestions, &m.rightSuggIndex
+	}
+	return m.leftSuggestions, &m.leftSuggIndex
+}
+
+func (m *Model) currentSuggestion() (string, bool) {
+	if !m.showSuggestions || m.focusedInput() == nil {
+		return "", false
+	}
+	items, index := m.suggestionList()
+	if *index < 0 || *index >= len(items) {
+		return "", false
+	}
+	return items[*index], true
+}
+
+// cycleSuggestion moves through the suggestions, and reports whether there were
+// any. A single suggestion has nowhere to cycle to, so Tab completes it instead.
+func (m *Model) cycleSuggestion(dir int) bool {
+	input := m.focusedInput()
+	if !m.showSuggestions || input == nil {
+		return false
+	}
+	items, index := m.suggestionList()
+	if len(items) == 0 {
+		return false
+	}
+	if len(items) == 1 {
+		*input = items[0]
+		m.clearSuggestions()
+		return true
+	}
+	*index = (*index + dir + len(items)) % len(items)
+	return true
+}
+
+// comparePaths loads the two paths on the open screen and moves on to the file
+// list, or stays with an error.
+func (m *Model) comparePaths() {
+	left, right := strings.TrimSpace(m.inputLeft), strings.TrimSpace(m.inputRight)
+	m.clearSuggestions()
+	if left == "" || right == "" {
+		m.errorMsg = "Enter both a left and a right path first"
+		return
+	}
+	leftFile, err := m.fileManager.LoadPath(left)
+	if err != nil {
+		m.errorMsg = fmt.Sprintf("Left path: %s", err)
+		return
+	}
+	rightFile, err := m.fileManager.LoadPath(right)
+	if err != nil {
+		m.errorMsg = fmt.Sprintf("Right path: %s", err)
+		return
+	}
+	m.leftPath, m.rightPath, m.leftFile, m.rightFile = left, right, leftFile, rightFile
+	m.filterQuery, m.filterTyping = "", false
+	m.updateCommonFiles()
+	m.OpenDiffIfFiles()
+}
+
+// selectionChanged loads the newly selected file's diff for the right-hand
+// pane: at once if it's quick, otherwise after a short delay.
+func (m *Model) selectionChanged() tea.Cmd {
+	if !m.wide() || m.selectedFile == "" {
+		return nil
+	}
+	m.previewSeq++
+	comp, ok := m.allFiles[m.selectedFile]
+	if !ok {
+		return nil
+	}
+	size := int64(0)
+	if comp.LeftFile != nil {
+		size += comp.LeftFile.Size
+	}
+	if comp.RightFile != nil {
+		size += comp.RightFile.Size
+	}
+	if _, cached := m.diffCache[m.selectedFile]; cached || size < previewNoDelayBytes {
+		m.ensureDiffLoaded()
+		return nil
+	}
+	seq := m.previewSeq
+	return tea.Tick(previewDelay, func(time.Time) tea.Msg { return previewMsg{seq: seq} })
+}
+
+// ensureDiffLoaded loads the selected file's diff unless it's already showing.
+func (m *Model) ensureDiffLoaded() {
+	if m.selectedFile != "" && (m.currentDiff == nil || m.diffFile != m.selectedFile) {
+		m.loadDiff()
 	}
 }
 
-// handleDiffKeys handles keys in diff view mode
+// focusDiff moves focus to the diff pane.
+func (m *Model) focusDiff() {
+	if m.selectedFile == "" {
+		return
+	}
+	m.ensureDiffLoaded()
+	m.viewMode = ViewModeDiff
+}
+
+// syncSelectionToFilter keeps the selection inside the filtered list.
+func (m *Model) syncSelectionToFilter() {
+	files := m.getSortedFiles()
+	for _, f := range files {
+		if f == m.selectedFile {
+			return
+		}
+	}
+	m.selectedFile = ""
+	if len(files) > 0 {
+		m.selectedFile = files[0]
+	}
+}
+
+// moveSelection moves the file list's selection by delta rows, stopping at the
+// ends.
+func (m *Model) moveSelection(delta int) tea.Cmd {
+	files := m.getSortedFiles()
+	if len(files) == 0 {
+		return nil
+	}
+	index := 0
+	for i, f := range files {
+		if f == m.selectedFile {
+			index = i
+			break
+		}
+	}
+	index = max(0, min(index+delta, len(files)-1))
+	if files[index] == m.selectedFile {
+		return nil
+	}
+	m.selectedFile = files[index]
+	return m.selectionChanged()
+}
+
+// handleFilesKeys handles keys when the file list has focus.
+func (m *Model) handleFilesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.clearMessages()
+
+	if m.filterTyping {
+		if text, ok := textOf(msg); ok {
+			m.filterQuery += text
+			m.syncSelectionToFilter()
+			return m, m.selectionChanged()
+		}
+		switch msg.String() {
+		case "enter":
+			m.filterTyping = false
+			return m, nil
+		case "backspace":
+			m.filterQuery = dropLastRune(m.filterQuery)
+			m.syncSelectionToFilter()
+			return m, m.selectionChanged()
+		case "esc":
+			m.clearFilter()
+			return m, m.selectionChanged()
+		case "ctrl+c":
+			return m, tea.Quit
+		case "up":
+			return m, m.moveSelection(-1)
+		case "down":
+			return m, m.moveSelection(1)
+		case "ctrl+d":
+			m.filterTyping = false
+			m.focusDiff()
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "?", "f1":
+		m.openHelp()
+	case "up", "k":
+		return m, m.moveSelection(-1)
+	case "down", "j":
+		return m, m.moveSelection(1)
+	case "pgup":
+		return m, m.moveSelection(-m.paneInnerHeight())
+	case "pgdown":
+		return m, m.moveSelection(m.paneInnerHeight())
+	case "g", "home":
+		return m, m.moveSelection(-len(m.allFiles))
+	case "G", "end":
+		return m, m.moveSelection(len(m.allFiles))
+	case "enter", "tab", "ctrl+d":
+		m.focusDiff()
+	case "/":
+		m.filterQuery, m.filterTyping = "", true
+	case "esc":
+		m.clearFilter()
+		return m, m.selectionChanged()
+	case "o":
+		m.openPaths()
+	case "ctrl+g":
+		m.openGitSelect()
+	case "r":
+		m.reload()
+	case "x":
+		m.swapSides()
+	case "c":
+		m.enterCopyMode()
+	case "F":
+		return m, m.openDirsInDiffTool()
+	case "m", "s", "e", "E", "D", "R", "n", "p":
+		// Keys that act on the selected file work from here too.
+		if m.selectedFile != "" {
+			m.ensureDiffLoaded()
+			return m.handleDiffKeys(msg)
+		}
+	case "]", "[":
+		if m.selectedFile != "" {
+			m.focusDiff()
+			return m.handleDiffKeys(msg)
+		}
+	}
+	return m, nil
+}
+
+// clearFilter removes the filter, selecting a file again if none matched.
+func (m *Model) clearFilter() {
+	m.filterQuery, m.filterTyping = "", false
+	m.syncSelectionToFilter()
+}
+
+// reload re-reads the comparison at the user's request.
+func (m *Model) reload() {
+	m.reloadComparison()
+	if m.errorMsg == "" {
+		m.statusMsg = "Reloaded from disk"
+	}
+}
+
+// swapSides swaps left and right, keeping the selected file.
+func (m *Model) swapSides() {
+	if m.gitMode {
+		if m.rightRef == "" {
+			m.errorMsg = "Can't swap: the working tree can only be on the right"
+			return
+		}
+		left, right := m.leftRef, m.rightRef
+		m.leftRef, m.rightRef = right, left
+		m.reloadComparison()
+		if m.errorMsg != "" {
+			m.leftRef, m.rightRef = left, right
+			return
+		}
+		m.statusMsg = "Swapped left and right"
+		return
+	} else {
+		if m.leftFile == nil || m.rightFile == nil {
+			return
+		}
+		m.leftPath, m.rightPath = m.rightPath, m.leftPath
+		m.inputLeft, m.inputRight = m.inputRight, m.inputLeft
+		if m.mergeTarget == "left" {
+			m.mergeTarget = "right"
+		} else {
+			m.mergeTarget = "left"
+		}
+	}
+	m.reloadComparison()
+	if m.selectedFile != "" {
+		m.loadDiff()
+	}
+	if m.errorMsg == "" {
+		m.statusMsg = "Swapped left and right"
+	}
+}
+
+// openDirsInDiffTool opens both compared folders in the external diff tool.
+func (m *Model) openDirsInDiffTool() tea.Cmd {
+	if m.gitMode || m.leftFile == nil || m.rightFile == nil || !m.leftFile.IsDir || !m.rightFile.IsDir {
+		m.errorMsg = "Opening folders in the diff tool needs two directories"
+		return nil
+	}
+	cmd, err := external.DirDiffCommand(m.leftFile.Path, m.rightFile.Path, false)
+	if err != nil {
+		m.errorMsg = err.Error()
+		return nil
+	}
+	return runExternal("diff", cmd)
+}
+
+// moveCursor moves the diff cursor by delta rows, stopping at the ends.
+func (m *Model) moveCursor(delta int) {
+	m.cursor = max(0, min(m.cursor+delta, m.maxDiffLines()-1))
+}
+
+// switchDiffView toggles unified and side-by-side, staying on the same line.
+func (m *Model) switchDiffView() {
+	line := m.cursorLineFor("right")
+	if m.diffViewMode == DiffViewUnified {
+		m.diffViewMode = DiffViewSideBySide
+	} else {
+		m.diffViewMode = DiffViewUnified
+	}
+	m.hScrollOffset = 0
+
+	target := -1
+	if line > 0 && m.diffViewMode == DiffViewSideBySide {
+		for i, r := range m.sbsRows {
+			if r.RightLineNum == line {
+				target = i
+				break
+			}
+		}
+	} else if line > 0 && m.currentDiff != nil {
+		for i, l := range m.currentDiff.Lines {
+			if l.RightLineNum == line {
+				target = i
+				break
+			}
+		}
+	}
+	if target < 0 {
+		m.moveToFirstChange()
+		return
+	}
+	m.cursor = target
+	m.scrollOffset = max(0, target-m.diffViewHeight()/4)
+}
+
+// enterMergeView opens the merge view or the conflict resolver for the file.
+func (m *Model) enterMergeView() {
+	if m.gitMode && m.conflicts[m.selectedFile] {
+		m.openConflictView()
+		return
+	}
+	comp, exists := m.allFiles[m.selectedFile]
+	if !exists || m.currentDiff == nil {
+		return
+	}
+	switch comp.Source {
+	case file.SourceLeft:
+		m.errorMsg = "Can't merge: this file exists only on the left. Use c to copy it"
+		return
+	case file.SourceRight:
+		m.errorMsg = "Can't merge: this file exists only on the right. Use c to copy it"
+		return
+	}
+	if comp.LeftFile.Content == comp.RightFile.Content {
+		m.errorMsg = "These files are identical, so there's nothing to merge"
+		return
+	}
+	m.viewMode = ViewModeMerge
+	m.initializeMergeMode()
+}
+
+// handleDiffKeys handles keys when the diff pane has focus
 func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.errorMsg, m.statusMsg = "", "" // messages are shown until the next key press
+	m.clearMessages()
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
-	case "esc":
+	case "esc", "tab":
 		m.viewMode = ViewModeFileSelect
 		return m, nil
 
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-			if m.cursor < m.scrollOffset {
-				m.scrollOffset = m.cursor
-			}
-		}
+		m.moveCursor(-1)
 		return m, nil
 
 	case "down", "j":
-		maxLines := m.maxDiffLines()
-		if m.cursor < maxLines-1 {
-			m.cursor++
-			maxVisible := m.windowHeight - 10
-			if m.cursor >= m.scrollOffset+maxVisible {
-				m.scrollOffset = m.cursor - maxVisible + 1
-			}
-		}
+		m.moveCursor(1)
+		return m, nil
+
+	case "pgup":
+		m.moveCursor(-m.diffViewHeight())
+		return m, nil
+
+	case "pgdown":
+		m.moveCursor(m.diffViewHeight())
 		return m, nil
 
 	case "left", "h":
-		if m.diffViewMode == DiffViewSideBySide && m.hScrollOffset > 0 {
-			m.hScrollOffset--
-		}
+		m.hScrollOffset = max(0, m.hScrollOffset-4)
 		return m, nil
 
 	case "right", "l":
-		if m.diffViewMode == DiffViewSideBySide {
-			m.hScrollOffset++
-		}
+		m.hScrollOffset += 4
 		return m, nil
 
-	case "g":
+	case "g", "home":
 		m.cursor = 0
 		m.scrollOffset = 0
 		return m, nil
 
-	case "G":
-		maxLines := m.maxDiffLines()
-		if maxLines > 0 {
-			m.cursor = maxLines - 1
-			maxVisible := m.windowHeight - 10
-			m.scrollOffset = max(0, m.cursor-maxVisible+1)
-		}
+	case "G", "end":
+		m.cursor = max(0, m.maxDiffLines()-1)
 		return m, nil
 
 	case "]":
@@ -665,55 +1011,44 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadDiff()
 		return m, nil
 
-	case "?":
-		m.viewMode = ViewModeHelp
+	case "?", "f1":
+		m.openHelp()
+		return m, nil
+
+	case "/":
+		m.viewMode = ViewModeFileSelect
+		m.filterQuery, m.filterTyping = "", true
 		return m, nil
 
 	case "s":
-		// Toggle between unified and side-by-side diff view; reset position
-		if m.diffViewMode == DiffViewUnified {
-			m.diffViewMode = DiffViewSideBySide
-		} else {
-			m.diffViewMode = DiffViewUnified
-		}
-		m.cursor = 0
-		m.scrollOffset = 0
-		m.hScrollOffset = 0
+		m.switchDiffView()
 		return m, nil
 
 	case "m":
-		// A git conflict opens the conflict resolver instead of the line merge
-		if m.gitMode && m.conflicts[m.selectedFile] {
-			m.openConflictView()
-			return m, nil
-		}
-		// Enter merge mode if we have a diff loaded
-		if m.currentDiff != nil {
-			// Check if this is a valid file for merging
-			if m.selectedFile != "" {
-				if fileComparison, exists := m.allFiles[m.selectedFile]; exists {
-					if fileComparison.Source == file.SourceBoth {
-						m.initializeMergeMode()
-						m.viewMode = ViewModeMerge
-					} else {
-						// Cannot merge files that only exist on one side
-						if fileComparison.Source == file.SourceLeft {
-							m.errorMsg = "Cannot merge: File exists only in LEFT directory"
-						} else {
-							m.errorMsg = "Cannot merge: File exists only in RIGHT directory"
-						}
-					}
-				}
-			}
-		}
+		m.enterMergeView()
 		return m, nil
 
 	case "c":
-		// Enter copy mode if we have files loaded
-		if len(m.allFiles) > 0 && m.hasUniqueFiles() {
-			m.initializeCopyMode()
-			m.viewMode = ViewModeCopy
-		}
+		m.enterCopyMode()
+		return m, nil
+
+	case "r":
+		m.reload()
+		return m, nil
+
+	case "x":
+		m.swapSides()
+		return m, nil
+
+	case "F":
+		return m, m.openDirsInDiffTool()
+
+	case "o":
+		m.openPaths()
+		return m, nil
+
+	case "ctrl+g":
+		m.openGitSelect()
 		return m, nil
 
 	case "e":
@@ -739,14 +1074,19 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // ---- External tools ---------------------------------------------------------
 
-// editablePath returns the on-disk path for one side of the selected file, or
-// "" when that side is missing or isn't a real file (a git ref, or the
-// working tree path when comparing ref to ref).
+// editablePath returns the on-disk path for one side of the selected file.
 func (m *Model) editablePath(side string) string {
 	comp, ok := m.allFiles[m.selectedFile]
 	if !ok {
 		return ""
 	}
+	return m.editablePathOf(comp, side)
+}
+
+// editablePathOf returns the on-disk path for one side of a comparison, or ""
+// when that side is missing or isn't a real file (a git ref, or the working
+// tree path when comparing ref to ref).
+func (m *Model) editablePathOf(comp *file.FileComparison, side string) string {
 	f := comp.RightFile
 	if side == "left" {
 		f = comp.LeftFile
@@ -758,6 +1098,62 @@ func (m *Model) editablePath(side string) string {
 		return ""
 	}
 	return f.Path
+}
+
+// pruneMergeBackups drops the .orig files of this session's saves from the
+// list, so that saving a merge doesn't add a row, and it can't be copied.
+func (m *Model) pruneMergeBackups() {
+	backups := m.tracker.Backups()
+	if len(backups) == 0 {
+		return
+	}
+	for relPath, comp := range m.allFiles {
+		var paths []string
+		if comp.LeftFile != nil {
+			paths = append(paths, m.editablePathOf(comp, "left"))
+		}
+		if comp.RightFile != nil {
+			paths = append(paths, m.editablePathOf(comp, "right"))
+		}
+		if merge.AllBackups(paths, backups) {
+			delete(m.allFiles, relPath)
+			delete(m.commonFiles, relPath)
+		}
+	}
+}
+
+// refreshStatuses works out each file's merge status and the list's summary.
+func (m *Model) refreshStatuses() {
+	m.statuses = make(map[string]*merge.Record)
+	m.differCount = 0
+	for relPath, comp := range m.allFiles {
+		if rec := m.tracker.StatusOf(m.editablePathOf(comp, "left"), m.editablePathOf(comp, "right")); rec != nil {
+			m.statuses[relPath] = rec
+		}
+		if comp.Source != file.SourceBoth || comp.LeftFile.Content != comp.RightFile.Content {
+			m.differCount++
+		}
+	}
+}
+
+// refreshTargetDisk compares the merge target on disk with what was loaded.
+func (m *Model) refreshTargetDisk() {
+	comp, ok := m.allFiles[m.selectedFile]
+	if !ok || comp.Source != file.SourceBoth {
+		return
+	}
+	path := m.editablePath(m.mergeTarget)
+	if path == "" {
+		return
+	}
+	loaded := comp.RightFile.Content
+	if m.mergeTarget == "left" {
+		loaded = comp.LeftFile.Content
+	}
+	if state, err := merge.DiskState(path, loaded); err == nil {
+		m.targetDisk = state
+	}
+	m.refreshStatuses()
 }
 
 // cursorLineFor returns the line number on side under the diff cursor,
@@ -886,7 +1282,7 @@ func (m *Model) handleExternalDone(msg externalDoneMsg) {
 // reloadComparison re-reads the compared files from disk (or git), keeping
 // the selected file and diff position where possible.
 func (m *Model) reloadComparison() {
-	selected := m.selectedFile
+	selected, shown := m.selectedFile, m.diffFile
 	cursor, scroll, hScroll := m.cursor, m.scrollOffset, m.hScrollOffset
 
 	if m.gitMode {
@@ -903,52 +1299,91 @@ func (m *Model) reloadComparison() {
 	if _, ok := m.allFiles[selected]; ok {
 		m.selectedFile = selected
 	}
-	if m.viewMode == ViewModeDiff && m.selectedFile != "" {
-		m.loadDiff()
-		maxLines := m.maxDiffLines()
-		if cursor >= maxLines {
-			cursor = max(0, maxLines-1)
+	m.syncSelectionToFilter()
+
+	if !m.browsing() {
+		m.currentDiff = nil
+		return
+	}
+	if m.selectedFile == "" {
+		m.currentDiff = nil
+		if m.viewMode != ViewModeFileSelect {
+			m.viewMode = ViewModeFileSelect
 		}
+		return
+	}
+	m.loadDiff()
+	if m.selectedFile == shown {
+		maxLines := m.maxDiffLines()
+		cursor = min(cursor, max(0, maxLines-1))
 		m.cursor, m.scrollOffset, m.hScrollOffset = cursor, min(scroll, cursor), hScroll
+	}
+	if m.viewMode == ViewModeMerge {
+		if comp := m.allFiles[m.selectedFile]; comp.Source != file.SourceBoth || m.selectedFile != selected {
+			m.viewMode = ViewModeDiff
+			m.errorMsg = "The file is no longer on both sides, so the merge has ended"
+			return
+		}
+		m.changeSelection = merge.NewChangeSelection(m.currentDiff)
+		m.targetDisk = merge.DiskUnchanged
+		m.overwriteArmed = false
 	}
 }
 
 // handleMergeKeys handles keys in merge view mode
 func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.errorMsg, m.statusMsg = "", ""
+	m.clearMessages()
+	armed := m.overwriteArmed
+	m.overwriteArmed = false
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
 	case "esc":
 		m.viewMode = ViewModeDiff
+		if m.diffViewMode == DiffViewSideBySide {
+			// The cursor was counting unified lines.
+			m.moveToFirstChange()
+		}
 		return m, nil
 
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-			if m.cursor < m.scrollOffset {
-				m.scrollOffset = m.cursor
-			}
-		}
+		m.moveCursor(-1)
 		return m, nil
 
 	case "down", "j":
-		if m.currentDiff != nil && m.cursor < len(m.currentDiff.Lines)-1 {
-			m.cursor++
-			maxVisible := m.mergeViewHeight()
-			if m.cursor >= m.scrollOffset+maxVisible {
-				m.scrollOffset = m.cursor - maxVisible + 1
-			}
-		}
+		m.moveCursor(1)
+		return m, nil
+
+	case "pgup":
+		m.moveCursor(-m.mergeViewHeight())
+		return m, nil
+
+	case "pgdown":
+		m.moveCursor(m.mergeViewHeight())
+		return m, nil
+
+	case "left", "h":
+		m.hScrollOffset = max(0, m.hScrollOffset-4)
+		return m, nil
+
+	case "right", "l":
+		m.hScrollOffset += 4
+		return m, nil
+
+	case "g", "home":
+		m.cursor, m.scrollOffset = 0, 0
+		return m, nil
+
+	case "G", "end":
+		m.cursor = max(0, m.maxDiffLines()-1)
 		return m, nil
 
 	case "enter":
 		// Toggle the whole block of changes under the cursor
-		if m.currentDiff != nil {
-			m.changeSelection.ToggleBlock(m.currentDiff, m.cursor)
-			m.updateMergePreview()
-		}
+		m.changeSelection.ToggleBlock(m.currentDiff, m.cursor)
+		m.refreshTargetDisk()
 		return m, nil
 
 	case "]":
@@ -961,28 +1396,25 @@ func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case " ":
 		// Toggle selection of current change
-		if m.currentDiff != nil && m.cursor < len(m.currentDiff.Lines) {
-			line := m.currentDiff.Lines[m.cursor]
-			switch line.Type {
+		if m.cursor < len(m.currentDiff.Lines) {
+			switch m.currentDiff.Lines[m.cursor].Type {
 			case differ.DiffInsert:
 				m.changeSelection.ToggleInsertion(m.cursor)
 			case differ.DiffDelete:
 				m.changeSelection.ToggleDeletion(m.cursor)
 			}
-			m.updateMergePreview()
+			m.refreshTargetDisk()
 		}
 		return m, nil
 
 	case "a":
-		// Select all changes
 		m.changeSelection.SelectAll(m.currentDiff)
-		m.updateMergePreview()
+		m.refreshTargetDisk()
 		return m, nil
 
 	case "n":
-		// Select no changes
 		m.changeSelection.SelectNone(m.currentDiff)
-		m.updateMergePreview()
+		m.refreshTargetDisk()
 		return m, nil
 
 	case "t":
@@ -992,19 +1424,23 @@ func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			other = "right"
 		}
 		if m.editablePath(other) == "" {
-			m.errorMsg = fmt.Sprintf("The %s side is a git revision, not a file — only the %s file can be changed", other, m.mergeTarget)
+			m.errorMsg = fmt.Sprintf("The %s side is a git revision, not a file. Only the %s file can be changed", other, m.mergeTarget)
 			return m, nil
 		}
 		m.mergeTarget = other
-		m.updateMergePreview()
+		m.refreshTargetDisk()
 		return m, nil
 
 	case "s":
-		// Save merged result
+		m.overwriteArmed = armed
 		return m, m.saveMergedFile()
 
-	case "?":
-		m.viewMode = ViewModeHelp
+	case "r":
+		m.reload()
+		return m, nil
+
+	case "?", "f1":
+		m.openHelp()
 		return m, nil
 	}
 
@@ -1013,77 +1449,55 @@ func (m *Model) handleMergeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleCopyKeys handles keys in copy view mode
 func (m *Model) handleCopyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.clearMessages()
+	uniqueFiles := m.getUniqueFiles()
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
 	case "esc":
+		m.cursor, m.scrollOffset = 0, 0
 		m.viewMode = ViewModeFileSelect
-		return m, nil
+		if m.currentDiff != nil {
+			m.moveToFirstChange()
+		}
 
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-			if m.cursor < m.scrollOffset {
-				m.scrollOffset = m.cursor
-			}
-		}
-		return m, nil
+		m.cursor = max(0, m.cursor-1)
 
 	case "down", "j":
-		uniqueFiles := m.getUniqueFiles()
-		if m.cursor < len(uniqueFiles)-1 {
-			m.cursor++
-			maxVisible := m.windowHeight - 12 // Account for header and footer
-			if m.cursor >= m.scrollOffset+maxVisible {
-				m.scrollOffset = m.cursor - maxVisible + 1
-			}
-		}
-		return m, nil
+		m.cursor = min(m.cursor+1, max(0, len(uniqueFiles)-1))
 
 	case " ", "enter":
-		// Toggle selection of current unique file
-		uniqueFiles := m.getUniqueFiles()
-		if m.cursor < len(uniqueFiles) {
+		if m.cursor < len(uniqueFiles) && m.canCopy(uniqueFiles[m.cursor]) {
 			relPath := uniqueFiles[m.cursor]
 			m.copySelection[relPath] = !m.copySelection[relPath]
 		}
-		return m, nil
 
 	case "a":
-		// Select all unique files
-		uniqueFiles := m.getUniqueFiles()
 		for _, relPath := range uniqueFiles {
 			m.copySelection[relPath] = true
 		}
-		return m, nil
 
 	case "n":
-		// Select no files
-		uniqueFiles := m.getUniqueFiles()
 		for _, relPath := range uniqueFiles {
 			m.copySelection[relPath] = false
 		}
-		return m, nil
 
 	case "t":
-		// Toggle copy target (to-left/to-right)
 		if m.copyTarget == "to-left" {
 			m.copyTarget = "to-right"
 		} else {
 			m.copyTarget = "to-left"
 		}
-		return m, nil
 
 	case "s":
-		// Execute copy operation
 		return m, m.executeCopyOperation()
 
-	case "?":
-		m.viewMode = ViewModeHelp
-		return m, nil
+	case "?", "f1":
+		m.openHelp()
 	}
-
 	return m, nil
 }
 
@@ -1104,18 +1518,9 @@ func (m *Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpScroll = 0
 	case "G", "end":
 		m.helpScroll = m.helpMaxScroll()
-	case "esc", "?":
+	case "esc", "?", "f1":
 		m.helpScroll = 0
-		if m.viewMode == ViewModeMerge {
-			m.viewMode = ViewModeMerge
-		} else if m.viewMode == ViewModeCopy {
-			m.viewMode = ViewModeCopy
-		} else if len(m.commonFiles) > 0 && m.currentDiff != nil {
-			m.viewMode = ViewModeDiff
-		} else {
-			m.viewMode = ViewModeFileSelect
-		}
-		return m, nil
+		m.viewMode = m.helpReturn
 	}
 	return m, nil
 }
@@ -1129,7 +1534,6 @@ func (m *Model) loadLeftPath() {
 		return
 	}
 	m.leftFile = leftFile
-	m.errorMsg = ""
 }
 
 func (m *Model) loadRightPath() {
@@ -1139,36 +1543,20 @@ func (m *Model) loadRightPath() {
 		return
 	}
 	m.rightFile = rightFile
-	m.errorMsg = ""
 }
 
 func (m *Model) updateCommonFiles() {
 	if m.leftFile != nil && m.rightFile != nil {
 		m.gitMode = false
 		m.conflicts = nil
+		m.diffCache = nil
+		m.diffGen++
 		m.commonFiles = file.FindCommonFiles(m.leftFile, m.rightFile)
 		m.allFiles = file.FindAllFiles(m.leftFile, m.rightFile)
+		m.pruneMergeBackups()
+		m.refreshStatuses()
 		m.fileListScroll = 0 // Reset scroll when files change
-
-		// Select first file by default if none selected
-		if len(m.allFiles) > 0 && m.selectedFile == "" {
-			files := m.getSortedFiles()
-			if len(files) > 0 {
-				m.selectedFile = files[0]
-			}
-		}
-
-		// Ensure selected file still exists in the new file list
-		if m.selectedFile != "" {
-			if _, exists := m.allFiles[m.selectedFile]; !exists {
-				files := m.getSortedFiles()
-				if len(files) > 0 {
-					m.selectedFile = files[0]
-				} else {
-					m.selectedFile = ""
-				}
-			}
-		}
+		m.syncSelectionToFilter()
 	}
 }
 
@@ -1198,31 +1586,25 @@ func (m *Model) displayNameForFile(relPath string) string {
 	return relPath
 }
 
+// getSortedFiles returns the files the list shows, in order: those matching
+// the filter, if there is one.
 func (m *Model) getSortedFiles() []string {
+	query := strings.ToLower(m.filterQuery)
 	files := make([]string, 0, len(m.allFiles))
 	for relPath := range m.allFiles {
-		files = append(files, relPath)
-	}
-
-	// Sort files alphabetically for consistent ordering
-	for i := 0; i < len(files)-1; i++ {
-		for j := i + 1; j < len(files); j++ {
-			if files[i] > files[j] {
-				files[i], files[j] = files[j], files[i]
-			}
+		if query == "" || strings.Contains(strings.ToLower(m.displayNameForFile(relPath)), query) {
+			files = append(files, relPath)
 		}
 	}
-
+	sort.Strings(files)
 	return files
 }
 
 func (m *Model) selectNextFile() {
-	if len(m.allFiles) == 0 {
+	files := m.getSortedFiles()
+	if len(files) == 0 {
 		return
 	}
-
-	files := m.getSortedFiles()
-
 	currentIndex := -1
 	for i, f := range files {
 		if f == m.selectedFile {
@@ -1230,7 +1612,6 @@ func (m *Model) selectNextFile() {
 			break
 		}
 	}
-
 	if currentIndex == -1 || currentIndex == len(files)-1 {
 		m.selectedFile = files[0]
 	} else {
@@ -1239,12 +1620,10 @@ func (m *Model) selectNextFile() {
 }
 
 func (m *Model) selectPreviousFile() {
-	if len(m.allFiles) == 0 {
+	files := m.getSortedFiles()
+	if len(files) == 0 {
 		return
 	}
-
-	files := m.getSortedFiles()
-
 	currentIndex := -1
 	for i, f := range files {
 		if f == m.selectedFile {
@@ -1252,7 +1631,6 @@ func (m *Model) selectPreviousFile() {
 			break
 		}
 	}
-
 	if currentIndex <= 0 {
 		m.selectedFile = files[len(files)-1]
 	} else {
@@ -1272,6 +1650,9 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 	statuses, err := git.ChangedFiles(root, leftRef, rightRef)
 	if err != nil {
 		return err
+	}
+	if rightRef == "" {
+		statuses = git.WithPaths(statuses, m.tracker.SavedUnder(root))
 	}
 	if len(statuses) == 0 {
 		return fmt.Errorf("no changes found between %s and %s", leftRef, func() string {
@@ -1380,15 +1761,43 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 		m.allFiles[fs.Path] = comparison
 	}
 
-	// Auto-select first file
-	if len(m.allFiles) > 0 {
-		sorted := m.getSortedFiles()
-		if len(sorted) > 0 {
-			m.selectedFile = sorted[0]
-		}
-	}
+	m.diffCache = nil
+	m.diffGen++
+	m.pruneMergeBackups()
+	m.refreshStatuses()
+	m.syncSelectionToFilter()
 
 	return nil
+}
+
+// computeDiff diffs one file's two sides.
+func computeDiff(d *differ.Differ, comp *file.FileComparison) *cachedDiff {
+	var leftContent, rightContent string
+	leftPath, rightPath := "<file not found>", "<file not found>"
+	if comp.LeftFile != nil {
+		leftContent, leftPath = comp.LeftFile.Content, comp.LeftFile.Path
+	}
+	if comp.RightFile != nil {
+		rightContent, rightPath = comp.RightFile.Content, comp.RightFile.Path
+	}
+	diff := d.CompareStrings(leftPath, rightPath, leftContent, rightContent)
+	return &cachedDiff{diff: diff, rows: differ.BuildSideBySideRows(diff.Lines)}
+}
+
+// computeDiffCmd diffs a file in the background.
+func (m *Model) computeDiffCmd(relPath string) tea.Cmd {
+	comp, ok := m.allFiles[relPath]
+	if !ok {
+		return nil
+	}
+	if _, cached := m.diffCache[relPath]; cached {
+		m.ensureDiffLoaded()
+		return nil
+	}
+	gen := m.diffGen
+	return func() tea.Msg {
+		return diffReadyMsg{relPath: relPath, gen: gen, cached: computeDiff(differ.New(), comp)}
+	}
 }
 
 func (m *Model) loadDiff() {
@@ -1403,43 +1812,33 @@ func (m *Model) loadDiff() {
 		return
 	}
 
-	var leftContent, rightContent, leftPath, rightPath string
-
-	switch fileComparison.Source {
-	case file.SourceBoth:
-		leftFile := fileComparison.LeftFile
-		rightFile := fileComparison.RightFile
-		leftContent = leftFile.Content
-		rightContent = rightFile.Content
-		leftPath = leftFile.Path
-		rightPath = rightFile.Path
-	case file.SourceLeft:
-		leftFile := fileComparison.LeftFile
-		leftContent = leftFile.Content
-		rightContent = ""
-		leftPath = leftFile.Path
-		rightPath = "<file not found>"
-	case file.SourceRight:
-		rightFile := fileComparison.RightFile
-		leftContent = ""
-		rightContent = rightFile.Content
-		leftPath = "<file not found>"
-		rightPath = rightFile.Path
+	cached, ok := m.diffCache[m.selectedFile]
+	if !ok {
+		cached = computeDiff(m.differ, fileComparison)
+		if m.diffCache == nil {
+			m.diffCache = make(map[string]*cachedDiff)
+		}
+		m.diffCache[m.selectedFile] = cached
 	}
 
-	diff := m.differ.CompareStrings(
-		leftPath,
-		rightPath,
-		leftContent,
-		rightContent,
-	)
-
-	m.currentDiff = diff
-	m.sbsRows = differ.BuildSideBySideRows(diff.Lines)
-	m.cursor = 0
-	m.scrollOffset = 0
+	m.currentDiff = cached.diff
+	m.sbsRows = cached.rows
+	m.diffFile = m.selectedFile
 	m.hScrollOffset = 0
-	m.errorMsg = "" // Clear any previous errors
+	m.moveToFirstChange()
+}
+
+// moveToFirstChange puts the cursor on the first change, with some context
+// above it, or at the top when the sides are the same.
+func (m *Model) moveToFirstChange() {
+	m.cursor, m.scrollOffset = 0, 0
+	for i := 0; i < m.maxDiffLines(); i++ {
+		if m.isChangeRow(i) {
+			m.cursor = i
+			m.scrollOffset = max(0, i-m.diffViewHeight()/4)
+			return
+		}
+	}
 }
 
 func max(a, b int) int {
@@ -1447,21 +1846,6 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// maxDiffLines returns the total navigable lines for the current view mode.
-// diffViewHeight is the number of diff rows visible at once (matches the
-// diff renderers in views.go).
-func (m *Model) diffViewHeight() int {
-	if m.viewMode == ViewModeMerge {
-		return m.mergeViewHeight()
-	}
-	return max(5, m.windowHeight-10)
-}
-
-// mergeViewHeight is the number of rows the merge view shows at once.
-func (m *Model) mergeViewHeight() int {
-	return max(5, m.windowHeight-12)
 }
 
 // usesSideBySideRows reports whether the cursor indexes sbsRows (the
@@ -1550,14 +1934,36 @@ func (m *Model) SetRightPath(path string) {
 	}
 }
 
-// OpenDiffIfFiles jumps straight to the diff view when both loaded paths are
-// single files. Directory comparisons stay on the file list so the user can
-// pick which file to diff.
+// OpenDiffIfFiles leaves the open screen once both paths have loaded: for two
+// files straight to the diff, and for directories to the file list so the user
+// can pick one.
 func (m *Model) OpenDiffIfFiles() {
-	if m.leftFile == nil || m.rightFile == nil || m.leftFile.IsDir || m.rightFile.IsDir {
+	if m.leftFile == nil || m.rightFile == nil {
 		return
 	}
-	m.openDiffForSelected()
+	if !m.leftFile.IsDir && !m.rightFile.IsDir {
+		m.focusDiff()
+		if m.viewMode == ViewModeDiff {
+			return
+		}
+	}
+	m.viewMode = ViewModeFileSelect
+	if m.selectedFile != "" {
+		m.ensureDiffLoaded()
+	}
+}
+
+// ShowFileList switches to the file list after LoadGitComparison.
+func (m *Model) ShowFileList() {
+	m.viewMode = ViewModeFileSelect
+	m.filterQuery, m.filterTyping = "", false
+	m.syncSelectionToFilter()
+	m.ensureDiffLoaded()
+}
+
+// FocusRightPath moves the open screen's focus to the right path field.
+func (m *Model) FocusRightPath() {
+	m.focus = focusInputRight
 }
 
 // Path suggestion methods
@@ -1662,48 +2068,43 @@ func (m *Model) generateSuggestions(input string) []string {
 	return suggestions
 }
 
-// initializeMergeMode sets up merge mode with default selections
+// initializeMergeMode sets up merge mode with every change ticked, on the
+// first change, with a target that's a real file.
 func (m *Model) initializeMergeMode() {
-	if m.currentDiff == nil {
-		return
-	}
-
-	// Only initialize merge mode for files that exist on both sides
-	if m.selectedFile != "" {
-		if fileComparison, exists := m.allFiles[m.selectedFile]; exists && fileComparison.Source == file.SourceBoth {
-			m.changeSelection = merge.NewChangeSelection(m.currentDiff)
-			if m.editablePath(m.mergeTarget) == "" {
-				if m.mergeTarget == "left" {
-					m.mergeTarget = "right"
-				} else {
-					m.mergeTarget = "left"
-				}
-			}
-			m.updateMergePreview()
-			m.cursor = 0
-			m.scrollOffset = 0
-			m.errorMsg = "" // Clear any previous error
+	m.changeSelection = merge.NewChangeSelection(m.currentDiff)
+	if m.editablePath(m.mergeTarget) == "" {
+		if m.mergeTarget == "left" {
+			m.mergeTarget = "right"
+		} else {
+			m.mergeTarget = "left"
 		}
 	}
-}
-
-// updateMergePreview updates the merge preview text
-func (m *Model) updateMergePreview() {
-	if m.currentDiff == nil || m.changeSelection == nil {
-		return
-	}
-
-	m.mergePreview = m.merger.CreateMergePreview(m.currentDiff, m.changeSelection, m.mergeTarget)
+	m.overwriteArmed = false
+	m.targetDisk = merge.DiskUnchanged
+	m.refreshTargetDisk()
+	m.hScrollOffset = 0
+	m.moveToFirstChange()
 }
 
 // saveDoneMsg reports the result of saving a merge.
 type saveDoneMsg struct {
-	text string
-	err  error
+	path   string
+	record *merge.Record
+	text   string
+	err    error
+}
+
+// issueSuffix reports what a save's checks found, if anything.
+func issueSuffix(report *merge.SaveReport) string {
+	if len(report.Issues) == 0 {
+		return ""
+	}
+	return " Check: " + strings.Join(report.Issues, "; ") + "."
 }
 
 // saveMergedFile applies the selected changes to the target side and saves
-// the result over that file, keeping the old version as "<file>.orig".
+// the result over that file, keeping the old version as "<file>.orig". If the
+// file changed after it was loaded, the first s only warns.
 func (m *Model) saveMergedFile() tea.Cmd {
 	if m.currentDiff == nil || m.changeSelection == nil {
 		return nil
@@ -1713,6 +2114,26 @@ func (m *Model) saveMergedFile() tea.Cmd {
 		m.errorMsg = fmt.Sprintf("The %s side is a git revision, not a file on disk", m.mergeTarget)
 		return nil
 	}
+	name := filepath.Base(targetPath)
+
+	m.refreshTargetDisk()
+	armed := m.overwriteArmed
+	m.overwriteArmed = false
+	if m.targetDisk == merge.DiskMissing {
+		m.errorMsg = fmt.Sprintf("%s no longer exists. Press r to reload", name)
+		return nil
+	}
+	selIns, _, selDel, _ := m.changeSelection.GetSelectedStats(m.currentDiff)
+	if selIns+selDel == 0 {
+		m.errorMsg = "No changes are ticked, so there's nothing to save"
+		return nil
+	}
+	if m.targetDisk == merge.DiskChanged && !armed {
+		m.overwriteArmed = true
+		m.errorMsg = fmt.Sprintf("%s changed on disk. Press s again to replace those edits (kept as %s.orig), or r to reload", name, name)
+		return nil
+	}
+
 	var result *merge.MergeResult
 	if m.mergeTarget == "left" {
 		result = m.merger.ApplyToLeft(m.currentDiff, m.changeSelection)
@@ -1720,12 +2141,16 @@ func (m *Model) saveMergedFile() tea.Cmd {
 		result = m.merger.ApplyToRight(m.currentDiff, m.changeSelection)
 	}
 	return func() tea.Msg {
-		backup, err := merge.SaveWithBackup(targetPath, result.Content)
+		report, err := merge.SaveVerified(targetPath, result.Content)
 		if err != nil {
 			return saveDoneMsg{err: fmt.Errorf("error saving merged file: %w", err)}
 		}
-		return saveDoneMsg{text: fmt.Sprintf("Saved %s (%d change(s) applied, %d skipped); previous version in %s",
-			targetPath, result.Applied, result.Skipped, filepath.Base(backup))}
+		return saveDoneMsg{
+			path:   targetPath,
+			record: &merge.Record{Report: report, Kind: merge.KindMerge, Applied: result.Applied, Skipped: result.Skipped},
+			text: fmt.Sprintf("Saved %s (%d applied, %d skipped); previous version in %s.%s",
+				name, result.Applied, result.Skipped, filepath.Base(report.Backup), issueSuffix(report)),
+		}
 	}
 }
 
@@ -1760,88 +2185,89 @@ func (m *Model) getUniqueFiles() []string {
 	return uniqueFiles
 }
 
-// initializeCopyMode sets up copy mode with default selections
-func (m *Model) initializeCopyMode() {
-	m.copySelection = make(map[string]bool)
+// canCopy reports whether a one-sided file goes in the current direction.
+func (m *Model) canCopy(relPath string) bool {
+	comp := m.allFiles[relPath]
+	if comp == nil {
+		return false
+	}
+	if m.copyTarget == "to-right" {
+		return comp.Source == file.SourceLeft
+	}
+	return comp.Source == file.SourceRight
+}
 
-	// By default, select all unique files
+// enterCopyMode opens the copy view, facing a direction that has files to copy.
+func (m *Model) enterCopyMode() {
+	if m.gitMode {
+		m.errorMsg = "Copy isn't available when comparing against git"
+		return
+	}
 	uniqueFiles := m.getUniqueFiles()
+	if len(uniqueFiles) == 0 {
+		m.errorMsg = "No files exist on only one side, so there's nothing to copy"
+		return
+	}
+	eligible := false
+	for _, relPath := range uniqueFiles {
+		eligible = eligible || m.canCopy(relPath)
+	}
+	if !eligible {
+		if m.copyTarget == "to-right" {
+			m.copyTarget = "to-left"
+		} else {
+			m.copyTarget = "to-right"
+		}
+	}
+	m.copySelection = make(map[string]bool)
 	for _, relPath := range uniqueFiles {
 		m.copySelection[relPath] = true
 	}
-
-	m.cursor = 0
-	m.scrollOffset = 0
+	m.cursor, m.scrollOffset = 0, 0
+	m.viewMode = ViewModeCopy
 }
 
-// executeCopyOperation copies selected unique files
+// copyDoneMsg reports the result of copying files.
+type copyDoneMsg struct {
+	text string
+	err  string
+}
+
+// executeCopyOperation copies the ticked files going in the current direction.
 func (m *Model) executeCopyOperation() tea.Cmd {
+	type copyJob struct{ rel, dst, content string }
+	var jobs []copyJob
+	skipped := 0
+	for _, relPath := range m.getUniqueFiles() {
+		if !m.copySelection[relPath] || !m.canCopy(relPath) {
+			skipped++
+			continue
+		}
+		comp := m.allFiles[relPath]
+		if m.copyTarget == "to-right" {
+			jobs = append(jobs, copyJob{relPath, filepath.Join(m.rightFile.Path, relPath), comp.LeftFile.Content})
+		} else {
+			jobs = append(jobs, copyJob{relPath, filepath.Join(m.leftFile.Path, relPath), comp.RightFile.Content})
+		}
+	}
 	return func() tea.Msg {
-		copiedCount := 0
-		skippedCount := 0
-		errorCount := 0
-		var errors []string
-
-		for relPath, shouldCopy := range m.copySelection {
-			if !shouldCopy {
-				skippedCount++
+		copied := 0
+		var errs []string
+		for _, job := range jobs {
+			if err := os.MkdirAll(filepath.Dir(job.dst), 0755); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", job.rel, err))
 				continue
 			}
-
-			fileComp, exists := m.allFiles[relPath]
-			if !exists {
+			if err := os.WriteFile(job.dst, []byte(job.content), 0644); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", job.rel, err))
 				continue
 			}
-
-			var srcFile *file.FileInfo
-			var dstPath string
-
-			if m.copyTarget == "to-right" && fileComp.Source == file.SourceLeft {
-				// Copy from left to right
-				srcFile = fileComp.LeftFile
-				dstPath = filepath.Join(m.rightFile.Path, relPath)
-			} else if m.copyTarget == "to-left" && fileComp.Source == file.SourceRight {
-				// Copy from right to left
-				srcFile = fileComp.RightFile
-				dstPath = filepath.Join(m.leftFile.Path, relPath)
-			} else {
-				// Wrong direction or file exists in both sides
-				skippedCount++
-				continue
-			}
-
-			// Create directory if needed
-			dstDir := filepath.Dir(dstPath)
-			if err := os.MkdirAll(dstDir, 0755); err != nil {
-				errors = append(errors, fmt.Sprintf("Failed to create directory for %s: %v", relPath, err))
-				errorCount++
-				continue
-			}
-
-			// Copy file
-			if err := os.WriteFile(dstPath, []byte(srcFile.Content), 0644); err != nil {
-				errors = append(errors, fmt.Sprintf("Failed to copy %s: %v", relPath, err))
-				errorCount++
-				continue
-			}
-
-			copiedCount++
+			copied++
 		}
-
-		// Create result message
-		var result strings.Builder
-		result.WriteString(fmt.Sprintf("Copy operation completed: %d copied, %d skipped", copiedCount, skippedCount))
-
-		if errorCount > 0 {
-			result.WriteString(fmt.Sprintf(", %d errors", errorCount))
-			if len(errors) > 0 {
-				result.WriteString("\nErrors:\n")
-				for _, err := range errors {
-					result.WriteString("  - " + err + "\n")
-				}
-			}
+		msg := copyDoneMsg{text: fmt.Sprintf("Copy finished: %d copied, %d skipped", copied, skipped)}
+		if len(errs) > 0 {
+			msg.err = fmt.Sprintf("%s failed to copy; first: %s", plural(len(errs), "file"), errs[0])
 		}
-
-		return result.String()
+		return msg
 	}
 }

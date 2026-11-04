@@ -227,75 +227,99 @@ task run-files
 task run-dirs
 ```
 
+### Layout
+
+The file list sits beside the diff, and the diff follows the selection, so you can move through a folder and read each change without switching screens. Each diff and merge opens on its first change. In a terminal narrower than 100 columns, one pane shows at a time with the same keys.
+
+```
+ katCompare  project-v1 ↔ project-v2                      5 files · 2 differ
+╭─ Files 1/5 ──────────────╮╭─ long.txt · Unified · +1 -1 ─────────────────╮
+│ ▶ ✗ long.txt             ││    19   line number 19                       │
+│   ◄ onlyleft.txt    left ││▶   20 - line number 20                       │
+│   ► onlyright.txt  right ││    20 + LINE NUMBER 20 changed               │
+│   ✓ same.txt             ││    21   line number 21                       │
+│   ◆ uni.txt         safe ││    22   line number 22                       │
+╰──────────────────────────╯╰──────────────────────────────────────────────╯
+ j/k move  Enter open diff  m merge  / filter  c copy  r reload  ? help
+```
+
+The bottom line shows the keys that work right now, and `?` lists them all.
+
 ### Interactive Controls
 
-#### File Selection Mode
-- **Tab**: Switch between left/right input fields and the View Diff / Quit buttons, or cycle through path suggestions when they're showing
-- **Enter**: Accept a highlighted path suggestion, load the focused input's path, or activate the focused button
-- **↑/↓**: Navigate suggestions (when showing) or the list of all files (common and unique)
-- **/**: Filter the file list by name (type to narrow, Backspace to edit, Esc to clear)
-- **Ctrl+D**: Start comparing the selected files
-- **?**: Show help screen
-- **q/Ctrl+C**: Quit application
+#### File List
+- **↑/↓** or **j/k**: Move; the diff follows the selection
+- **g/G**, **PgUp/PgDn**: Top/bottom, page up/down
+- **Enter**, **Tab** or **Ctrl+D**: Focus the diff, on its first change
+- **/**: Filter by name (Enter keeps the filter, Esc clears it)
+- **m**: Merge the selected file
+- **c**: Copy files that exist on only one side
+- **r**: Reload from disk
+- **x**: Swap left and right
+- **F**: Open both folders in your external diff tool
+- **o**: Change the paths
+- **Ctrl+G**: Compare git branches and commits
+- **?**: Show help
+- **q/Ctrl+C**: Quit
 
-Path autocomplete kicks in automatically as you type in either input field, suggesting matching files/directories from the filesystem (press Tab or ↑/↓ to cycle, Enter to accept).
-
-#### Diff View Mode (Unified & Side-by-Side)
-- **↑/↓** or **j/k**: Navigate through diff lines
-- **h/l** or **←/→**: Scroll left/right (side-by-side view only)
-- **s**: Switch view mode (Unified ↔ Side-by-Side)
-- **g**: Go to top of diff
-- **G**: Go to bottom of diff
+#### Diff (Unified & Side-by-Side)
+- **↑/↓** or **j/k**: Move a line
+- **g/G**, **PgUp/PgDn**: Top/bottom, page up/down
 - **]** / **[**: Jump to the next / previous change
-- **n**: Next file
-- **p**: Previous file
-- **m**: Enter merge mode (only for files that exist on both sides); on a git conflict it opens the conflict resolver
-- **c**: Enter copy mode (only available when the loaded directories have unique files)
-- **e**: Edit the right file (the working tree file in git mode) at the cursor line
-- **E**: Edit the left file at the cursor line
+- **h/l** or **←/→**: Scroll sideways
+- **s**: Switch between unified and side-by-side, staying on the same line
+- **n** / **p**: Next / previous file
+- **Tab** or **Esc**: Back to the file list
+- **m**: Merge (only for files on both sides); on a git conflict it opens the conflict resolver
+- **e** / **E**: Edit the right / left file at the cursor line
 - **D**: Open the file pair in your external diff tool
-- **R**: Resolve a git merge conflict with `git mergetool` (conflicted files show ⚠ **[CONFLICT]**)
-- **Esc**: Return to file selection
-- **?**: Show help screen
-- **q/Ctrl+C**: Quit application
+- **R**: Resolve a git merge conflict with `git mergetool`
+- **r**, **x**, **c**: Reload, swap, copy, as in the file list
 
-#### Merge Mode
-- **↑/↓** or **j/k**: Navigate through diff lines
+#### Merge
+The status line says what saving will do. A ticked change makes the target match the other side, so with target RIGHT a ticked insertion is removed from the right file.
+
+- **↑/↓** or **j/k**: Move a line
 - **]** / **[**: Jump to the next / previous change
-- **Space**: Toggle the change on the current line
-- **Enter**: Toggle the whole block of changes
-- **t**: Switch merge target (left/right file; a git revision can't be a target)
-- **a**: Select all changes
-- **n**: Select no changes
-- **s**: Save over the target file (the previous version is kept as `<file>.orig`)
-- **Esc**: Return to diff view
-- **?**: Show help screen
-- **q/Ctrl+C**: Quit application
+- **h/l** or **←/→**: Scroll sideways
+- **Space**: Tick the change on the current line
+- **Enter**: Tick the whole block
+- **t**: Switch the target (left/right file; a git revision can't be a target)
+- **a** / **n**: Tick all / none
+- **s**: Save over the target (the previous version is kept as `<file>.orig`). If the file changed on disk after it was loaded, the first **s** warns and a second one replaces those edits
+- **r**: Reload from disk
+- **Esc**: Back to the diff
 
-#### Conflict Mode (`m` on a git conflict)
+#### Conflicts (`m` on a git conflict)
 - **↑/↓**, **j/k** or **]**/**[**: Move between conflicts
 - **o** / **t**: Take ours / theirs
 - **b** / **B**: Take both (ours first / theirs first)
-- **u**: Undo the choice
+- **u** / **U**: Undo this choice / every choice
 - **O** / **T**: Take ours / theirs for every conflict
-- **s**: Save the chosen resolutions (unresolved conflicts keep their markers)
+- **s**: Save the chosen resolutions (unresolved conflicts keep their markers; the previous version is kept as `<file>.orig`)
 - **A**: Save and mark resolved (`git add`)
 - **e**: Edit the file at the current conflict
 - **R**: Resolve in your external merge tool instead
-- **Esc**: Return to diff view
+- **Esc**: Back to the diff
 
-#### Copy Mode (Directory Comparison Only)
-- **↑/↓** or **j/k**: Navigate through unique files
-- **Space/Enter**: Toggle selection of current file to copy
-- **t**: Switch copy target (to-left ↔ to-right)
-- **a**: Select all unique files
-- **n**: Select no files
-- **s**: Copy selected files to target directory
-- **Esc**: Return to diff view
-- **?**: Show help screen
-- **q/Ctrl+C**: Quit application
+#### Copy (Directories Only)
+- **↑/↓** or **j/k**: Move through the files on only one side
+- **Space/Enter**: Tick a file
+- **t**: Switch the direction (it starts on one that has files to copy)
+- **a** / **n**: Tick all / none
+- **s**: Copy the ticked files
+- **Esc**: Back to the file list
 
-> Copy mode is entered with **c** from the diff view (not from file selection).
+#### Open Screen
+Shown when you start `katcmp` with no paths, or press **o**. Paths are suggested as you type, and you can paste them.
+
+- **Tab** or **↑/↓**: Choose a suggestion (with one suggestion, Tab completes it). Tab moves to the next field when none are showing
+- **Shift+Tab**: Previous field
+- **Enter**: Accept a suggestion, then move on and compare
+- **Esc**: Close the suggestions, then go back to the comparison
+- **Ctrl+G**: Compare git branches and commits
+- **F1**: Help (`?` and `q` are ordinary characters in a path)
+- **Ctrl+C**: Quit
 
 ## Editor & external diff tools
 
@@ -347,8 +371,7 @@ diff_tool = 'katcmp-win --wait "$LOCAL" "$REMOTE"'
 - **Blue background**: Added lines (+)
 - **Red background**: Deleted lines (-)
 - **Gray text**: Unchanged lines
-- **Yellow background**: Selected changes (merge mode)
-- **Strikethrough text**: Unselected changes (merge mode)
+- **Blue or red text, no background**: Unticked changes (merge mode)
 
 ### File Status Indicators
 - **✓ Green checkmark**: Identical files (same content in both directories)
@@ -356,12 +379,12 @@ diff_tool = 'katcmp-win --wait "$LOCAL" "$REMOTE"'
 - **◄ Blue arrow**: File exists only in LEFT directory **[LEFT ONLY]**
 - **► Orange arrow**: File exists only in RIGHT directory **[RIGHT ONLY]**
 - **⚠ Yellow warning**: File has unresolved git merge conflicts **[CONFLICT]**
-- **◆ Green diamond** (GUI): File saved from the Merge or Conflicts view and passed its checks **[MERGED · SAFE]**
-- **▲ Yellow triangle** (GUI): File saved, but a check failed; the banner above the diff says which **[MERGED · CHECK]**
+- **◆ Green diamond**: File saved from the Merge or Conflicts view and passed its checks **[MERGED · SAFE]**
+- **▲ Yellow triangle**: File saved, but a check failed; the banner above the diff says which **[MERGED · CHECK]**
 
-### Merge Status (GUI)
+### Merge Status
 
-After each save from the Merge or Conflicts view, the GUI checks that:
+After each save from the Merge or Conflicts view, both the GUI and the TUI check that:
 
 - the file on disk matches the merge result when read back
 - the `.orig` backup matches the previous version
@@ -375,9 +398,9 @@ The Merge toolbar also shows whether the target file matches the view right now:
 
 - **● Saved · matches disk**: nothing is checked, and the file hasn't changed since it was loaded
 - **○ Unsaved · saving removes 20 lines from f.txt**: checked changes aren't in the file yet, and this says what saving would do. A checked change makes the target match the other side, so with Apply to right, a checked insertion is removed from the right file
-- **▲ Changed on disk**: the file changed or disappeared after it was loaded. Use **Reload**, or **Overwrite anyway** to replace those edits
+- **▲ Changed on disk**: the file changed or disappeared after it was loaded. Use **Reload**, or **Overwrite anyway** to replace those edits (in the TUI, **r** reloads, and **s** warns before a second **s** replaces them)
 
-This is checked when you change a pick or return to the window, so it won't update while the window stays focused and idle.
+This is checked when you change a pick or return to the window, so it won't update while the window stays focused and idle. The TUI also checks just before saving, and notices you returning to its window if your terminal reports focus.
 
 ## 📄 Supported File Types
 
@@ -408,8 +431,8 @@ Files with any of the 60+ extensions or names below are always treated as text. 
 1. **Load Paths**: Enter file or directory paths in the input fields (with live autocomplete), or use `--git` to diff against a git ref/working tree
 2. **Analyze All Files**: For directories, the tool finds ALL text files from both locations
 3. **Categorize Files**: Files are marked as common (both sides), left-only, or right-only
-4. **Select File**: Choose any file to compare using the arrow keys, optionally filtering the list with `/`
-5. **View Diff**: See the comparison with color-coded changes
+4. **Select File**: Move through the list with the arrow keys or j/k, optionally filtering it with `/`
+5. **View Diff**: See the comparison with color-coded changes beside the list, updating as you move
 6. **Navigate**: Move through all files (common and unique) seamlessly
 7. **Merge Changes**: Press 'm' to enter merge mode (only for common files)
 8. **Save Results**: Choose which changes to keep and save the merged file
@@ -447,7 +470,7 @@ Then enter paths interactively using the TUI.
 
 ### Copy Unique Files Between Directories
 ```bash
-# Compare directories, then from the diff view press 'c' to enter copy mode
+# Compare directories, then press 'c' to enter copy mode
 ./katcmp old-project/ new-project/
 # Select files to copy and press 's' to copy them
 ```
@@ -464,7 +487,7 @@ Then enter paths interactively using the TUI.
 ### Project Structure
 ```
 internal/
-├── ui/         # TUI state, key handling (model.go) and rendering (views.go)
+├── ui/         # TUI state and keys (model.go), rendering (views.go, layout.go, text.go)
 ├── differ/     # Diff computation engine
 ├── merge/      # Merge functionality and change selection
 ├── file/       # File operations and type detection
@@ -478,30 +501,34 @@ examples/       # Sample files for testing
 ## 🎛️ Advanced Usage
 
 ### Keyboard Shortcuts Summary
-| Key | File Selection | Diff View | Side-by-Side | Merge Mode | Copy Mode | Description |
-|-----|----------------|-----------|--------------|------------|-----------|-------------|
-| `Tab` | ✅ | ❌ | ❌ | ❌ | ❌ | Switch input fields / cycle suggestions |
-| `Enter` | ✅ | ❌ | ❌ | ✅ | ✅ | Load entered path / Toggle change block / Toggle file |
-| `↑/↓` | ✅ | ✅ | ✅ | ✅ | ✅ | Navigate lists/lines |
-| `j/k` | ❌ | ✅ | ✅ | ✅ | ✅ | Vim-style navigation |
-| `h/l` or `←/→` | ❌ | ❌ | ✅ | ❌ | ❌ | Scroll left/right |
-| `g/G` | ❌ | ✅ | ✅ | ❌ | ❌ | Jump to top/bottom |
-| `]/[` | ❌ | ✅ | ✅ | ✅ | ❌ | Jump to next/previous change |
-| `/` | ✅ | ❌ | ❌ | ❌ | ❌ | Filter file list |
-| `s` | ❌ | ✅ | ✅ | ✅ | ✅ | Switch view mode / Save result / Copy files |
-| `n/p` | ❌ | ✅ | ✅ | ❌ | ❌ | Next/previous file |
-| `m` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter merge mode / conflict resolver |
-| `c` | ❌ | ✅ | ✅ | ❌ | ❌ | Enter copy mode |
-| `e`/`E` | ❌ | ✅ | ✅ | ❌ | ❌ | Edit right/left file in your editor |
-| `D` | ❌ | ✅ | ✅ | ❌ | ❌ | Open in external diff tool |
-| `R` | ❌ | ✅ | ✅ | ❌ | ❌ | Resolve git conflict with mergetool |
-| `t` | ❌ | ❌ | ❌ | ✅ | ✅ | Switch merge/copy target |
-| `a` | ❌ | ❌ | ❌ | ✅ | ✅ | Select all changes/files |
-| `Space` | ❌ | ❌ | ❌ | ✅ | ✅ | Toggle current change/file |
-| `Ctrl+D` | ✅ | ❌ | ❌ | ❌ | ❌ | Start comparison |
-| `Esc` | ❌ | ✅ | ✅ | ✅ | ✅ | Return to previous view |
-| `?` | ✅ | ✅ | ✅ | ✅ | ✅ | Show help screen |
-| `q`/`Ctrl+C` | ✅ | ✅ | ✅ | ✅ | ✅ | Quit application |
+| Key | File List | Diff | Merge | Copy | Description |
+|-----|-----------|------|-------|------|-------------|
+| `↑/↓`, `j/k` | ✅ | ✅ | ✅ | ✅ | Move |
+| `g/G`, `PgUp/PgDn` | ✅ | ✅ | ✅ | ❌ | Top/bottom, page up/down |
+| `Tab` | ✅ | ✅ | ❌ | ❌ | Switch between the file list and the diff |
+| `Enter` | ✅ | ❌ | ✅ | ✅ | Open the diff / Tick a block / Tick a file |
+| `Ctrl+D` | ✅ | ❌ | ❌ | ❌ | Open the diff |
+| `h/l` or `←/→` | ❌ | ✅ | ✅ | ❌ | Scroll sideways |
+| `]/[` | ✅ | ✅ | ✅ | ❌ | Jump to next/previous change |
+| `/` | ✅ | ✅ | ❌ | ❌ | Filter the file list |
+| `s` | ✅ | ✅ | ✅ | ✅ | Switch view / Save / Copy |
+| `n/p` | ✅ | ✅ | ❌ | ❌ | Next/previous file |
+| `m` | ✅ | ✅ | ❌ | ❌ | Merge / resolve a conflict |
+| `c` | ✅ | ✅ | ❌ | ❌ | Copy files on only one side |
+| `r` | ✅ | ✅ | ✅ | ❌ | Reload from disk |
+| `x` | ✅ | ✅ | ❌ | ❌ | Swap left and right |
+| `F` | ✅ | ✅ | ❌ | ❌ | Open both folders in the diff tool |
+| `o` | ✅ | ✅ | ❌ | ❌ | Change the paths |
+| `Ctrl+G` | ✅ | ✅ | ❌ | ❌ | Compare git refs |
+| `e`/`E` | ✅ | ✅ | ❌ | ❌ | Edit right/left file in your editor |
+| `D` | ✅ | ✅ | ❌ | ❌ | Open in external diff tool |
+| `R` | ✅ | ✅ | ❌ | ❌ | Resolve git conflict with mergetool |
+| `t` | ❌ | ❌ | ✅ | ✅ | Switch merge target / copy direction |
+| `a/n` | ❌ | ❌ | ✅ | ✅ | Tick all / none |
+| `Space` | ❌ | ❌ | ✅ | ✅ | Tick the current change/file |
+| `Esc` | ❌ | ✅ | ✅ | ✅ | Back (in the file list: clear the filter) |
+| `?` | ✅ | ✅ | ✅ | ✅ | Show help |
+| `q`/`Ctrl+C` | ✅ | ✅ | ✅ | ✅ | Quit |
 
 ### Performance Tips
 - Large files (>10MB) may take a moment to process

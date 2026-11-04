@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
 	"katcompare/internal/conflict"
 	"katcompare/internal/differ"
@@ -40,10 +39,8 @@ type App struct {
 	rightRef  string
 	conflicts map[string]bool
 
-	// Saves made this session, by the target's absolute path. Frontend calls
-	// can overlap, so access goes through mergesMu.
-	mergesMu sync.Mutex
-	merges   map[string]*mergeRecord
+	// Saves made this session.
+	merges *merge.Tracker
 
 	// Paths passed on the command line, pre-filled into the UI on startup.
 	initialPaths []string
@@ -56,7 +53,7 @@ func NewApp(initialPaths []string) *App {
 		differ:       differ.New(),
 		merger:       merge.New(),
 		allFiles:     make(map[string]*file.FileComparison),
-		merges:       make(map[string]*mergeRecord),
+		merges:       merge.NewTracker(),
 	}
 }
 
@@ -274,7 +271,7 @@ func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, er
 	rightLabel := rightRef
 	if rightLabel == "" {
 		rightLabel = "working tree"
-		statuses = a.withMergedFiles(root, statuses)
+		statuses = git.WithPaths(statuses, a.merges.SavedUnder(root))
 	}
 	if len(statuses) == 0 {
 		return nil, fmt.Errorf("no changes found between %s and %s", leftRef, rightLabel)
@@ -375,7 +372,7 @@ func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, er
 
 func (a *App) buildComparisonResult() *ComparisonResult {
 	entries := make([]FileEntry, 0, len(a.allFiles))
-	backups := a.mergeBackups()
+	backups := a.merges.Backups()
 	for relPath, comp := range a.allFiles {
 		if a.isMergeBackup(comp, backups) {
 			continue
@@ -582,7 +579,7 @@ func (a *App) SaveMerge(req MergeSaveRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	a.recordMerge(targetPath, &mergeRecord{report: report, kind: "merge", applied: result.Applied, skipped: result.Skipped})
+	a.merges.Record(targetPath, &merge.Record{Report: report, Kind: merge.KindMerge, Applied: result.Applied, Skipped: result.Skipped})
 	return fmt.Sprintf("Saved %s (%d change(s) applied, %d skipped); previous version in %s.",
 		targetPath, result.Applied, result.Skipped, filepath.Base(report.Backup)) + issueSuffix(report), nil
 }
@@ -602,43 +599,20 @@ func (a *App) CheckTargetOnDisk(relPath, target string) (string, error) {
 	if target == "left" {
 		loaded = comp.LeftFile.Content
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return "missing", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if string(data) != loaded {
-		return "changed", nil
-	}
-	return "unchanged", nil
+	return merge.DiskState(path, loaded)
 }
 
 // ---- Merge status ----
 
-// mergeRecord is one save made this session.
-type mergeRecord struct {
-	report  *merge.SaveReport
-	kind    string // "merge" | "conflicts"
-	target  string // file name, set by recordMerge
-	applied int
-	skipped int
-}
-
-func (r *mergeRecord) status() *MergeStatusDTO {
-	state := "safe"
-	if len(r.report.Issues) > 0 {
-		state = "check"
-	}
+func mergeStatusDTO(r *merge.Record) *MergeStatusDTO {
 	return &MergeStatusDTO{
-		State:   state,
-		Kind:    r.kind,
-		Target:  r.target,
-		Backup:  filepath.Base(r.report.Backup),
-		Applied: r.applied,
-		Skipped: r.skipped,
-		Issues:  r.report.Issues,
+		State:   r.State(),
+		Kind:    r.Kind,
+		Target:  r.Target,
+		Backup:  filepath.Base(r.Report.Backup),
+		Applied: r.Applied,
+		Skipped: r.Skipped,
+		Issues:  r.Report.Issues,
 	}
 }
 
@@ -649,117 +623,26 @@ func issueSuffix(report *merge.SaveReport) string {
 	return " Check: " + strings.Join(report.Issues, "; ") + "."
 }
 
-// mergeKey is the key of path in App.merges.
-func mergeKey(path string) string {
-	if abs, err := filepath.Abs(path); err == nil {
-		return abs
-	}
-	return path
-}
-
-func (a *App) recordMerge(path string, rec *mergeRecord) {
-	rec.target = filepath.Base(path)
-	a.mergesMu.Lock()
-	defer a.mergesMu.Unlock()
-	a.merges[mergeKey(path)] = rec
-}
-
-// validMergeRecord returns the record for key if the file still matches that
-// save, and forgets the record if it doesn't. The caller holds mergesMu.
-func (a *App) validMergeRecord(key string) *mergeRecord {
-	rec, ok := a.merges[key]
-	if !ok {
-		return nil
-	}
-	data, err := os.ReadFile(key)
-	if err != nil || merge.HashContent(data) != rec.report.Hash {
-		delete(a.merges, key)
-		return nil
-	}
-	return rec
-}
-
-// mergeStatusFor returns the status of a comparison's saved sides, or nil. If
-// both sides were saved, one that needs checking takes priority.
+// mergeStatusFor returns the status of a comparison's saved sides, or nil.
 func (a *App) mergeStatusFor(comp *file.FileComparison) *MergeStatusDTO {
-	a.mergesMu.Lock()
-	defer a.mergesMu.Unlock()
-	var status *MergeStatusDTO
-	for _, side := range []string{"left", "right"} {
-		path := a.editablePath(comp, side)
-		if path == "" {
-			continue
-		}
-		rec := a.validMergeRecord(mergeKey(path))
-		if rec == nil {
-			continue
-		}
-		if s := rec.status(); status == nil || s.State == "check" {
-			status = s
-		}
+	rec := a.merges.StatusOf(a.editablePath(comp, "left"), a.editablePath(comp, "right"))
+	if rec == nil {
+		return nil
 	}
-	return status
-}
-
-// mergeBackups returns the absolute paths of the backups of valid records.
-func (a *App) mergeBackups() map[string]bool {
-	a.mergesMu.Lock()
-	defer a.mergesMu.Unlock()
-	backups := make(map[string]bool)
-	for key := range a.merges {
-		if rec := a.validMergeRecord(key); rec != nil {
-			backups[mergeKey(rec.report.Backup)] = true
-		}
-	}
-	return backups
+	return mergeStatusDTO(rec)
 }
 
 // isMergeBackup reports whether every file in comp is a backup from backups,
 // so that saving a merge doesn't add a row to the file list.
 func (a *App) isMergeBackup(comp *file.FileComparison, backups map[string]bool) bool {
-	found := false
-	for _, side := range []string{"left", "right"} {
-		var f *file.FileInfo
-		if side == "left" {
-			f = comp.LeftFile
-		} else {
-			f = comp.RightFile
-		}
-		if f == nil {
-			continue
-		}
-		path := a.editablePath(comp, side)
-		if path == "" || !backups[mergeKey(path)] {
-			return false
-		}
-		found = true
+	var paths []string
+	if comp.LeftFile != nil {
+		paths = append(paths, a.editablePath(comp, "left"))
 	}
-	return found
-}
-
-// withMergedFiles adds files saved this session that git no longer lists, so
-// that a merge which removes a file's last difference doesn't remove its row.
-func (a *App) withMergedFiles(root string, statuses []git.FileStatus) []git.FileStatus {
-	listed := make(map[string]bool, len(statuses))
-	for _, fs := range statuses {
-		listed[fs.Path] = true
+	if comp.RightFile != nil {
+		paths = append(paths, a.editablePath(comp, "right"))
 	}
-	a.mergesMu.Lock()
-	defer a.mergesMu.Unlock()
-	for key := range a.merges {
-		if a.validMergeRecord(key) == nil {
-			continue
-		}
-		rel, err := filepath.Rel(root, key)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		rel = filepath.ToSlash(rel)
-		if !listed[rel] {
-			statuses = append(statuses, git.FileStatus{Path: rel, Status: 'M'})
-		}
-	}
-	return statuses
+	return merge.AllBackups(paths, backups)
 }
 
 // ---- Conflicts ----
@@ -837,7 +720,7 @@ func (a *App) SaveConflicts(relPath string, choices []string, markResolved bool)
 	if err != nil {
 		return "", fmt.Errorf("failed to save %s: %w", relPath, err)
 	}
-	a.recordMerge(path, &mergeRecord{report: report, kind: "conflicts"})
+	a.merges.Record(path, &merge.Record{Report: report, Kind: merge.KindConflicts})
 	if markResolved {
 		if err := git.MarkResolved(a.gitRoot, relPath); err != nil {
 			return "", err

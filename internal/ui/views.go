@@ -3,397 +3,199 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"katcompare/internal/differ"
 	"katcompare/internal/file"
+	"katcompare/internal/merge"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderFileSelectView renders the file selection interface
-func (m *Model) renderFileSelectView() string {
-	var b strings.Builder
+// ---- Browse: the file list beside the diff, merge or conflict pane ----------
 
-	// Title
-	title := titleStyle.Width(m.windowWidth - 2).Render("File Comparison Tool")
-	b.WriteString(title)
-	b.WriteString("\n\n")
+// renderBrowseView draws the two panes, or just the focused one when narrow.
+func (m *Model) renderBrowseView() string {
+	h := m.bodyHeight()
+	filesFocused := m.viewMode == ViewModeFileSelect
 
-	// Input fields - adapt width to terminal
-	maxInputWidth := m.windowWidth - 20 // Leave space for labels and padding
-	if maxInputWidth < 30 {
-		maxInputWidth = 30
-	}
-
-	leftLabel := "Left Path: "
-	rightLabel := "Right Path: "
-
-	// Truncate input display if too long
-	leftDisplay := m.inputLeft
-	rightDisplay := m.inputRight
-	if len(leftDisplay) > maxInputWidth {
-		leftDisplay = "..." + leftDisplay[len(leftDisplay)-maxInputWidth+3:]
-	}
-	if len(rightDisplay) > maxInputWidth {
-		rightDisplay = "..." + rightDisplay[len(rightDisplay)-maxInputWidth+3:]
-	}
-
-	var leftInput, rightInput string
-	if m.focus == focusInputLeft {
-		leftInput = focusedInputStyle.Width(maxInputWidth).Render(leftDisplay + "│")
-		rightInput = inputStyle.Width(maxInputWidth).Render(rightDisplay)
-	} else if m.focus == focusInputRight {
-		leftInput = inputStyle.Width(maxInputWidth).Render(leftDisplay)
-		rightInput = focusedInputStyle.Width(maxInputWidth).Render(rightDisplay + "│")
+	var body string
+	if m.wide() {
+		files := box(m.filesPaneTitle(), m.renderFileRows(m.filesPaneWidth()-2), m.filesPaneWidth(), h, filesFocused)
+		title, lines := m.renderRightPane(m.rightPaneWidth()-2, m.paneInnerHeight())
+		right := box(title, lines, m.rightPaneWidth(), h, !filesFocused)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, files, right)
+	} else if filesFocused {
+		body = box(m.filesPaneTitle(), m.renderFileRows(m.windowWidth-2), m.windowWidth, h, true)
 	} else {
-		leftInput = inputStyle.Width(maxInputWidth).Render(leftDisplay)
-		rightInput = inputStyle.Width(maxInputWidth).Render(rightDisplay)
+		title, lines := m.renderRightPane(m.windowWidth-2, m.paneInnerHeight())
+		body = box(title, lines, m.windowWidth, h, true)
 	}
-
-	b.WriteString(leftLabel + leftInput)
-	b.WriteString("\n")
-
-	// Show suggestions for left path if focused and available
-	if m.focus == focusInputLeft && m.showSuggestions && len(m.leftSuggestions) > 0 {
-		b.WriteString(m.renderSuggestions(m.leftSuggestions, m.leftSuggIndex))
-		b.WriteString("\n")
-	}
-
-	b.WriteString(rightLabel + rightInput)
-	b.WriteString("\n")
-
-	// Show suggestions for right path if focused and available
-	if m.focus == focusInputRight && m.showSuggestions && len(m.rightSuggestions) > 0 {
-		b.WriteString(m.renderSuggestions(m.rightSuggestions, m.rightSuggIndex))
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-
-	// Buttons - part of the Tab focus cycle (Left Path -> Right Path -> View Diff -> Quit)
-	var quitButton string
-	if m.focus == focusQuitBtn {
-		quitButton = focusedButtonStyle.Render("Quit")
-	} else {
-		quitButton = buttonStyle.Render("Quit")
-	}
-
-	if m.canViewDiff() {
-		var viewDiffButton string
-		if m.focus == focusViewDiffBtn {
-			viewDiffButton = focusedButtonStyle.Render("View Diff")
-		} else {
-			viewDiffButton = buttonStyle.Render("View Diff")
-		}
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, viewDiffButton, "  ", quitButton))
-	} else {
-		b.WriteString(quitButton)
-	}
-	b.WriteString("\n")
-
-	// Status information - truncate paths if too long
-	if m.leftFile != nil {
-		leftPath := m.leftPath
-		if len(leftPath) > maxInputWidth {
-			leftPath = "..." + leftPath[len(leftPath)-maxInputWidth+3:]
-		}
-		b.WriteString(fmt.Sprintf("✓ Left: %s ", leftPath))
-		if m.leftFile.IsDir {
-			b.WriteString("(directory)")
-		} else {
-			b.WriteString("(file)")
-		}
-		b.WriteString("\n")
-	}
-
-	if m.rightFile != nil {
-		rightPath := m.rightPath
-		if len(rightPath) > maxInputWidth {
-			rightPath = "..." + rightPath[len(rightPath)-maxInputWidth+3:]
-		}
-		b.WriteString(fmt.Sprintf("✓ Right: %s ", rightPath))
-		if m.rightFile.IsDir {
-			b.WriteString("(directory)")
-		} else {
-			b.WriteString("(file)")
-		}
-		b.WriteString("\n")
-	}
-
-	if len(m.allFiles) > 0 {
-		commonCount := len(m.commonFiles)
-		totalCount := len(m.allFiles)
-		uniqueCount := totalCount - commonCount
-
-		if commonCount > 0 && uniqueCount > 0 {
-			b.WriteString(fmt.Sprintf("\nFound %d files (%d common, %d unique):\n", totalCount, commonCount, uniqueCount))
-		} else if commonCount > 0 {
-			b.WriteString(fmt.Sprintf("\nFound %d common files:\n", commonCount))
-		} else {
-			b.WriteString(fmt.Sprintf("\nFound %d unique files:\n", uniqueCount))
-		}
-
-		if m.selectedFile != "" {
-			selectedPath := m.displayNameForFile(m.selectedFile)
-
-			// Truncate path if too long for display
-			maxPathWidth := m.windowWidth - 16 // Leave space for "► Selected: "
-			if maxPathWidth < 20 {
-				maxPathWidth = 20
-			}
-			if len(selectedPath) > maxPathWidth {
-				selectedPath = "..." + selectedPath[len(selectedPath)-(maxPathWidth-3):]
-			}
-
-			// Show selected file on one line
-			b.WriteString(selectedFileStyle.Render("► Selected: " + selectedPath))
-			b.WriteString("\n")
-
-			// Show help instruction on separate line to avoid width conflicts
-			var helpText string
-			maxHelpWidth := m.windowWidth - 6 // Conservative margin
-			if maxHelpWidth < 20 {
-				maxHelpWidth = 20
-			}
-
-			if m.windowWidth < 60 {
-				helpText = "Press Ctrl+D to compare"
-			} else {
-				helpText = "Press Ctrl+D to compare, or ↑/↓ to select different file"
-			}
-
-			// Truncate help text if still too long
-			if len(helpText) > maxHelpWidth {
-				helpText = helpText[:maxHelpWidth-3] + "..."
-			}
-
-			b.WriteString(helpStyle.Render("  " + helpText))
-			b.WriteString("\n")
-		}
-
-		// Filter bar
-		if m.filterActive {
-			filterDisplay := m.filterQuery + "│"
-			b.WriteString(focusedInputStyle.Width(m.windowWidth-4).Render("Filter: " + filterDisplay))
-			b.WriteString("\n")
-		}
-
-		b.WriteString(m.renderFileList())
-	}
-
-	// Error message
-	if m.errorMsg != "" {
-		b.WriteString("\n")
-		errorMsg := m.errorMsg
-		if len(errorMsg) > m.windowWidth-20 {
-			errorMsg = errorMsg[:m.windowWidth-23] + "..."
-		}
-		b.WriteString(errorStyle.Width(m.windowWidth - 4).Render("Error: " + errorMsg))
-		b.WriteString("\n")
-	}
-
-	// Help text - adapt to width
-	b.WriteString("\n")
-	var helpText string
-	if m.filterActive {
-		helpText = "Type to filter • Backspace: delete • Esc: clear filter • ↑↓: Navigate • Ctrl+D: Compare"
-	} else if m.showSuggestions {
-		if m.windowWidth > 80 {
-			helpText = "↑↓: Navigate suggestions • Tab: Next suggestion • Enter: Accept • Esc: Cancel"
-		} else {
-			helpText = "↑↓: Navigate • Tab: Next • Enter: Accept • Esc: Cancel"
-		}
-	} else {
-		if len(m.allFiles) > 0 {
-			// When files are loaded, emphasize the comparison functionality
-			if m.windowWidth > 100 {
-				helpText = "Tab: Switch input/View Diff/Quit • Enter: Load path or activate button • ↑↓: Navigate files • Ctrl+D: Compare • Ctrl+G: Git refs • /: Filter • ?: Help • Q: Quit"
-			} else if m.windowWidth > 80 {
-				helpText = "Tab: Switch/Diff/Quit • Enter: Load/Activate • ↑↓: Navigate • Ctrl+D: Compare • /: Filter • ?: Help • Q: Quit"
-			} else if m.windowWidth > 60 {
-				helpText = "Tab:Switch/Diff/Quit Enter:Load/Activate ↑↓:Nav Ctrl+D:Compare /:Filter ?:Help Q:Quit"
-			} else {
-				helpText = "↑↓:Select Ctrl+D:Compare /:Filter Q:Quit"
-			}
-		} else {
-			// When no files are loaded, emphasize the input functionality
-			if m.windowWidth > 80 {
-				helpText = "Tab: Switch input/Quit button • Enter: Load path • ↑↓: Navigate suggestions • Ctrl+G: Git refs • ?: Help • Q: Quit"
-			} else if m.windowWidth > 60 {
-				helpText = "Tab: Switch/Quit • Enter: Load • ↑↓: Navigate • Ctrl+G: Git • ?: Help • Q: Quit"
-			} else {
-				helpText = "Tab:Switch Enter:Load ?:Help Q:Quit"
-			}
-		}
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth - 2).Render(helpText))
-
-	return b.String()
+	return m.frame(body, m.browseKeys())
 }
 
-// renderFileList renders the list of all files (common and unique)
-func (m *Model) renderFileList() string {
-	if len(m.allFiles) == 0 {
-		return ""
+func (m *Model) browseKeys() string {
+	w := m.windowWidth
+	help := key{"?", "help"}
+	switch m.viewMode {
+	case ViewModeMerge:
+		return renderKeys(w, key{"Space", "line"}, key{"Enter", "block"}, key{"]/[", "change"}, key{"t", "target"},
+			key{"a/n", "all/none"}, key{"s", "save"}, key{"r", "reload"}, key{"Esc", "back"}, key{"h/l", "scroll"}, help)
+	case ViewModeConflict:
+		return renderKeys(w, key{"j/k", "conflict"}, key{"o/t", "ours/theirs"}, key{"b/B", "both"}, key{"s", "save"},
+			key{"A", "save & mark resolved"}, key{"u/U", "undo/all"}, key{"O/T", "all ours/theirs"},
+			key{"Esc", "back"}, key{"e", "edit"}, key{"R", "merge tool"}, help)
+	case ViewModeDiff:
+		return renderKeys(w, key{"j/k", "line"}, key{"]/[", "change"}, key{"n/p", "file"}, key{"s", "view"}, key{"m", "merge"},
+			key{"Tab", "files"}, key{"e", "edit"}, key{"D", "diff tool"}, key{"h/l", "scroll"}, key{"r", "reload"}, help)
 	}
+	if m.filterTyping {
+		return renderKeys(w, key{"Type", "to filter"}, key{"↑↓", "move"}, key{"Enter", "keep filter"}, key{"Esc", "clear"}, help)
+	}
+	keys := []key{{"j/k", "move"}, {"Enter", "open diff"}, {"m", "merge"}, {"/", "filter"}}
+	if m.filterQuery != "" {
+		keys = append(keys, key{"Esc", "clear filter"})
+	}
+	keys = append(keys, m.comparisonKeys()...)
+	return renderKeys(w, append(keys, key{"o", "paths"}, key{"Ctrl+G", "git"}, key{"q", "quit"}, help)...)
+}
 
-	// Define styles for file status indicators
-	identicalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Bold(true) // Green
-	differentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true) // Red
-	leftOnlyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#0066FF")).Bold(true)  // Blue
-	rightOnlyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Bold(true) // Orange
-	sizeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))                 // Gray
-	conflictStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Bold(true)  // Yellow
+// comparisonKeys returns the whole-comparison keys that can work right now.
+func (m *Model) comparisonKeys() []key {
+	var keys []key
+	if !m.gitMode && m.hasUniqueFiles() {
+		keys = append(keys, key{"c", "copy"})
+	}
+	keys = append(keys, key{"r", "reload"})
+	if !m.gitMode || m.rightRef != "" {
+		keys = append(keys, key{"x", "swap"})
+	}
+	if !m.gitMode && m.leftFile != nil && m.rightFile != nil && m.leftFile.IsDir && m.rightFile.IsDir {
+		keys = append(keys, key{"F", "folder diff"})
+	}
+	return keys
+}
 
-	// Calculate available space for file list
-	usedHeight := 15 // Approximate height used by title, inputs, status, help
-	if m.showSuggestions {
-		usedHeight += 10 // More space used by suggestions
-	}
-	if m.filterActive {
-		usedHeight += 2 // Space for filter bar
-	}
-	if m.errorMsg != "" {
-		usedHeight += 3 // Space for error message
-	}
+// ---- File list --------------------------------------------------------------
 
-	availableHeight := m.windowHeight - usedHeight
-	if availableHeight < 5 {
-		availableHeight = 5
-	}
-
-	// Get all files, sorted, then filtered
-	allFiles := make([]string, 0, len(m.allFiles))
-	for relPath := range m.allFiles {
-		allFiles = append(allFiles, relPath)
-	}
-	sort.Strings(allFiles)
-
-	if m.filterActive && m.filterQuery != "" {
-		query := strings.ToLower(m.filterQuery)
-		filtered := allFiles[:0]
-		for _, f := range allFiles {
-			if strings.Contains(strings.ToLower(f), query) {
-				filtered = append(filtered, f)
-			}
+func (m *Model) filesPaneTitle() string {
+	files := m.getSortedFiles()
+	for i, f := range files {
+		if f == m.selectedFile {
+			return fmt.Sprintf("Files %d/%d", i+1, len(files))
 		}
-		allFiles = filtered
+	}
+	return "Files"
+}
+
+// renderFileRows draws the file list's rows, keeping the selection in view.
+func (m *Model) renderFileRows(width int) []string {
+	var rows []string
+	height := m.paneInnerHeight()
+	if m.filterTyping || m.filterQuery != "" {
+		cursor := ""
+		if m.filterTyping {
+			cursor = "│"
+		}
+		rows = append(rows, truncatePath(" / "+sanitizeLine(m.filterQuery)+cursor, width))
+		height = max(1, height-1)
 	}
 
-	// Find current selection index
-	selectedIndex := 0
-	for i, relPath := range allFiles {
-		if relPath == m.selectedFile {
-			selectedIndex = i
+	files := m.getSortedFiles()
+	if len(files) == 0 {
+		if m.filterQuery != "" {
+			return append(rows, helpStyle.Render(" No files match"))
+		}
+		return append(rows, helpStyle.Render(" No text files found"))
+	}
+
+	selected := 0
+	for i, f := range files {
+		if f == m.selectedFile {
+			selected = i
 			break
 		}
 	}
-
-	// Calculate scroll offset to keep selected item visible
-	startIndex := 0
-	if len(allFiles) > availableHeight {
-		startIndex = selectedIndex - availableHeight/2
-		if startIndex < 0 {
-			startIndex = 0
-		}
-		if startIndex+availableHeight > len(allFiles) {
-			startIndex = len(allFiles) - availableHeight
-		}
+	m.fileListScroll = scrollFor(m.fileListScroll, selected, height, len(files))
+	end := min(m.fileListScroll+height, len(files))
+	for i := m.fileListScroll; i < end; i++ {
+		rows = append(rows, m.renderFileRow(files[i], width, i == selected))
 	}
+	return rows
+}
 
-	endIndex := startIndex + availableHeight
-	if endIndex > len(allFiles) {
-		endIndex = len(allFiles)
+// fileBadge returns the row's icon and status, in short and full forms.
+func (m *Model) fileBadge(relPath string) (icon string, style lipgloss.Style, short, full string) {
+	comp := m.allFiles[relPath]
+	if m.conflicts[relPath] {
+		return "⚠", conflictStateStyle, "conflict", "conflict"
 	}
+	if rec := m.statuses[relPath]; rec != nil {
+		if rec.State() == merge.StateSafe {
+			return "◆", statusStyle, "safe", "merged · safe"
+		}
+		return "▲", warnStyle, "check", "merged · check"
+	}
+	switch comp.Source {
+	case file.SourceLeft:
+		return "◄", leftOnlyStyle, "left", "left only"
+	case file.SourceRight:
+		return "►", rightOnlyStyle, "right", "right only"
+	}
+	if comp.LeftFile.Content == comp.RightFile.Content {
+		return "✓", identicalStyle, "", ""
+	}
+	return "✗", differentStyle, "", ""
+}
 
-	// Calculate max width for file display
-	maxFileWidth := m.windowWidth - 8 // Account for borders and padding
+// fileSizes describes a row's size(s).
+func fileSizes(comp *file.FileComparison) string {
+	switch comp.Source {
+	case file.SourceLeft:
+		return formatFileSize(comp.LeftFile.Size)
+	case file.SourceRight:
+		return formatFileSize(comp.RightFile.Size)
+	}
+	if comp.LeftFile.Size == comp.RightFile.Size {
+		return formatFileSize(comp.LeftFile.Size)
+	}
+	return formatFileSize(comp.LeftFile.Size) + " → " + formatFileSize(comp.RightFile.Size)
+}
 
-	var items []string
-	for i := startIndex; i < endIndex; i++ {
-		relPath := allFiles[i]
-		fileComparison := m.allFiles[relPath]
-
-		var statusIndicator, sizeInfo, sourceInfo string
-
-		switch fileComparison.Source {
-		case file.SourceBoth:
-			leftFile := fileComparison.LeftFile
-			rightFile := fileComparison.RightFile
-
-			// Check if files are identical
-			isIdentical := leftFile.Content == rightFile.Content
-			if isIdentical {
-				statusIndicator = identicalStyle.Render("✓")
+// renderFileRow draws "▶ ✗ name   size  badge", dropping the size and then the
+// long form of the badge as space runs out.
+func (m *Model) renderFileRow(relPath string, width int, selected bool) string {
+	icon, style, short, full := m.fileBadge(relPath)
+	right := short
+	if width >= 44 {
+		right = full
+		if width >= 56 {
+			size := fileSizes(m.allFiles[relPath])
+			if right == "" {
+				right = size
 			} else {
-				statusIndicator = differentStyle.Render("✗")
+				right = fmt.Sprintf("%s  %s", size, right)
 			}
-
-			// Format file size (show left file size, or both if different)
-			if leftFile.Size == rightFile.Size {
-				sizeInfo = sizeStyle.Render(fmt.Sprintf("(%s)", formatFileSize(leftFile.Size)))
-			} else {
-				sizeInfo = sizeStyle.Render(fmt.Sprintf("(L:%s R:%s)", formatFileSize(leftFile.Size), formatFileSize(rightFile.Size)))
-			}
-			sourceInfo = ""
-
-		case file.SourceLeft:
-			leftFile := fileComparison.LeftFile
-			statusIndicator = leftOnlyStyle.Render("◄")
-			sizeInfo = sizeStyle.Render(fmt.Sprintf("(%s)", formatFileSize(leftFile.Size)))
-			sourceInfo = leftOnlyStyle.Render(" [LEFT ONLY]")
-
-		case file.SourceRight:
-			rightFile := fileComparison.RightFile
-			statusIndicator = rightOnlyStyle.Render("►")
-			sizeInfo = sizeStyle.Render(fmt.Sprintf("(%s)", formatFileSize(rightFile.Size)))
-			sourceInfo = rightOnlyStyle.Render(" [RIGHT ONLY]")
-		}
-		if m.conflicts[relPath] {
-			statusIndicator = conflictStyle.Render("⚠")
-			sourceInfo += conflictStyle.Render(" [CONFLICT]")
-		}
-
-		// Truncate filename if too long.
-		// Use lipgloss.Width to measure rendered strings — len() counts ANSI escape bytes too.
-		displayPath := m.displayNameForFile(relPath)
-		baseWidth := 4 + lipgloss.Width(sizeInfo) + lipgloss.Width(sourceInfo)
-		if len(displayPath) > maxFileWidth-baseWidth {
-			maxPathWidth := maxFileWidth - baseWidth - 3 // 3 for "..."
-			if maxPathWidth > 0 {
-				displayPath = "..." + displayPath[len(displayPath)-maxPathWidth:]
-			}
-		}
-
-		fileDisplay := fmt.Sprintf("%s %s %s%s", statusIndicator, displayPath, sizeInfo, sourceInfo)
-
-		if relPath == m.selectedFile {
-			items = append(items, selectedFileStyle.Width(maxFileWidth).Render("► "+fileDisplay))
-		} else {
-			items = append(items, "  "+fileDisplay)
 		}
 	}
 
-	content := strings.Join(items, "\n")
-	contentHeight := len(items)
-
-	// Add scroll indicator if needed
-	if len(allFiles) > availableHeight {
-		scrollInfo := fmt.Sprintf("\nShowing %d-%d of %d files", startIndex+1, endIndex, len(allFiles))
-		content += helpStyle.Render(scrollInfo)
-		contentHeight += 2 // blank line + scroll indicator line
+	nameWidth := width - 6 // marker, icon, spaces around them and at the end
+	if right != "" {
+		nameWidth -= lipgloss.Width(right) + 1
+	}
+	name := fitCell(truncatePath(sanitizeLine(m.displayNameForFile(relPath)), max(1, nameWidth)), max(1, nameWidth))
+	if right != "" {
+		right = " " + right
 	}
 
-	// Size the box to its actual content instead of always reserving the
-	// full available height - a fixed-height box padded with blank lines
-	// pushes the rest of the screen (title, path inputs) past the terminal
-	// height and off-screen once files are loaded.
-	if contentHeight < 1 {
-		contentHeight = 1
+	if selected {
+		rowStyle := selectedDimStyle
+		if m.viewMode == ViewModeFileSelect {
+			rowStyle = selectedFileStyle
+		}
+		return rowStyle.Render(fitCell(" ▶ "+icon+" "+name+right+" ", width))
 	}
-	return fileListStyle.Width(m.windowWidth - 4).Height(contentHeight).Render(content)
+	return "   " + style.Render(icon) + " " + name + style.Render(right) + " "
 }
 
 // formatFileSize formats file size in human readable format
@@ -404,192 +206,384 @@ func formatFileSize(size int64) string {
 		return fmt.Sprintf("%.1fKB", float64(size)/1024)
 	} else if size < 1024*1024*1024 {
 		return fmt.Sprintf("%.1fMB", float64(size)/(1024*1024))
-	} else {
-		return fmt.Sprintf("%.1fGB", float64(size)/(1024*1024*1024))
 	}
+	return fmt.Sprintf("%.1fGB", float64(size)/(1024*1024*1024))
 }
 
-// renderDiffView renders the diff comparison view
-func (m *Model) renderDiffView() string {
-	if m.currentDiff == nil {
-		return "No diff loaded"
-	}
+// ---- Right pane -------------------------------------------------------------
 
-	var b strings.Builder
-
-	// Header with file names - truncate if too long
-	leftFile := m.currentDiff.LeftFile
-	rightFile := m.currentDiff.RightFile
-	maxFileNameWidth := (m.windowWidth - 4) / 2 // Split width for both names
-	if maxFileNameWidth > 3 && len(leftFile) > maxFileNameWidth {
-		leftFile = "..." + leftFile[len(leftFile)-maxFileNameWidth+3:]
+// renderRightPane returns the title and lines of the diff, merge or conflict
+// pane, for an inner size of w by h.
+func (m *Model) renderRightPane(w, h int) (string, []string) {
+	switch m.viewMode {
+	case ViewModeMerge:
+		return m.renderMergePane(w)
+	case ViewModeConflict:
+		return m.renderConflictPane(w, h)
 	}
-	if maxFileNameWidth > 3 && len(rightFile) > maxFileNameWidth {
-		rightFile = "..." + rightFile[len(rightFile)-maxFileNameWidth+3:]
-	}
+	return m.renderDiffPane(w)
+}
 
-	var viewModeIndicator string
-	if m.diffViewMode == DiffViewSideBySide {
-		viewModeIndicator = " [Side-by-Side]"
+// renderStatusBanner is the selected file's last save this session, or "".
+func (m *Model) renderStatusBanner(w int) string {
+	rec := m.statuses[m.selectedFile]
+	if rec == nil {
+		return ""
+	}
+	backup := filepath.Base(rec.Report.Backup)
+	var details []string
+	title, style := "◆ Merged safely to "+rec.Target, statusStyle
+	if rec.State() == merge.StateSafe {
+		if rec.Kind == merge.KindMerge {
+			details = append(details, fmt.Sprintf("%d applied, %d skipped", rec.Applied, rec.Skipped))
+		} else {
+			details = append(details, "no conflicts left")
+		}
 	} else {
-		viewModeIndicator = " [Unified]"
+		title, style = "▲ Check this merge to "+rec.Target, warnStyle
+		details = append(details, rec.Report.Issues...)
+	}
+	details = append(details, backup+" kept")
+	if rec.State() == merge.StateSafe && m.conflicts[m.selectedFile] {
+		details = append(details, "A stages it")
+	}
+	return style.Render(truncate(sanitizeLine(" "+title+"  "+strings.Join(details, " · ")), w))
+}
+
+func (m *Model) renderDiffPane(w int) (string, []string) {
+	if m.selectedFile == "" {
+		return "Diff", []string{helpStyle.Render(" Select a file to see its differences")}
+	}
+	name := sanitizeLine(m.displayNameForFile(m.selectedFile))
+	if m.currentDiff == nil || m.diffFile != m.selectedFile {
+		return name, []string{helpStyle.Render(" Loading…")}
 	}
 
-	header := fmt.Sprintf("%s vs %s%s", leftFile, rightFile, viewModeIndicator)
+	_, inserted, deleted := m.currentDiff.GetStats()
+	mode := "Unified"
+	if m.diffViewMode == DiffViewSideBySide {
+		mode = "Side-by-side"
+	}
+	title := fmt.Sprintf("%s · %s · +%d -%d", name, mode, inserted, deleted)
+	if inserted == 0 && deleted == 0 {
+		title = fmt.Sprintf("%s · %s · identical", name, mode)
+	}
 	if m.conflicts[m.selectedFile] {
-		header += " [CONFLICT — m: resolve here, R: merge tool]"
+		title = fmt.Sprintf("%s · CONFLICT: m resolves here, R uses your merge tool", name)
 	}
-	b.WriteString(headerStyle.Width(m.windowWidth).Render(header))
-	b.WriteString("\n\n")
-
-	// Stats
-	equal, inserted, deleted := m.currentDiff.GetStats()
-	var stats string
-	if m.windowWidth > 60 {
-		stats = fmt.Sprintf("Lines: %d equal, %d inserted (+), %d deleted (-)", equal, inserted, deleted)
-	} else {
-		stats = fmt.Sprintf("%d equal, %d added, %d deleted", equal, inserted, deleted)
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth).Render(stats))
-	b.WriteString("\n\n")
-	if m.errorMsg != "" {
-		b.WriteString(errorStyle.Render(m.errorMsg))
-		b.WriteString("\n\n")
-	} else if m.statusMsg != "" {
-		b.WriteString(statusStyle.Render(m.statusMsg))
-		b.WriteString("\n\n")
+	if m.hScrollOffset > 0 {
+		title += fmt.Sprintf(" · →%d", m.hScrollOffset)
 	}
 
-	// Diff content based on view mode
+	var lines []string
+	if banner := m.renderStatusBanner(w); banner != "" {
+		lines = append(lines, banner)
+	}
 	if m.diffViewMode == DiffViewSideBySide {
-		b.WriteString(m.renderSideBySideContent())
+		lines = append(lines, m.renderSideBySideRows(w, m.diffViewHeight())...)
 	} else {
-		b.WriteString(m.renderDiffContent())
+		lines = append(lines, m.renderUnifiedRows(w, m.diffViewHeight())...)
 	}
-
-	// Navigation help - adapt to width and view mode
-	b.WriteString("\n")
-	var helpText string
-	if m.diffViewMode == DiffViewSideBySide {
-		if m.windowWidth > 80 {
-			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • g/G: Top/Bottom • ]/[: Next/Prev change • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
-		} else if m.windowWidth > 60 {
-			helpText = "↑↓/j/k: Navigate • h/l: Left/Right • ]/[: Changes • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
-		} else {
-			helpText = "↑↓:Nav h/l:L/R ]/[:Chg s:View n/p:Files m:Merge Esc:Back ?:Help Q:Quit"
-		}
-	} else {
-		if m.windowWidth > 80 {
-			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • ]/[: Next/Prev change • s: Switch view • n/p: Next/Prev file • m: Merge • e: Edit • D: Diff tool • Esc: Back • ?: Help • Q: Quit"
-		} else if m.windowWidth > 60 {
-			helpText = "↑↓/j/k: Navigate • g/G: Top/Bottom • ]/[: Changes • s: Switch view • n/p: All files • m: Merge • Esc: Back • ?: Help • Q: Quit"
-		} else {
-			helpText = "↑↓:Nav ]/[:Chg s:View n/p:Files m:Merge Esc:Back ?:Help Q:Quit"
-		}
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth).Render(helpText))
-
-	return b.String()
+	return title, lines
 }
 
-// renderDiffContent renders the actual diff lines with syntax highlighting
-func (m *Model) renderDiffContent() string {
-	if m.currentDiff == nil || len(m.currentDiff.Lines) == 0 {
-		return "No differences found"
+// cursorMark is the marker for a row, hidden while the file list has focus.
+func (m *Model) cursorMark(i int) string {
+	if i == m.cursor && m.viewMode != ViewModeFileSelect {
+		return "▶ "
 	}
+	return "  "
+}
 
-	var b strings.Builder
-	maxVisible := m.windowHeight - 10 // Account for header, stats, and help text
-	if maxVisible < 5 {
-		maxVisible = 5
+func (m *Model) renderUnifiedRows(w, height int) []string {
+	diffLines := m.currentDiff.Lines
+	if len(diffLines) == 0 {
+		return []string{helpStyle.Render(" Both files are empty")}
 	}
+	m.scrollOffset = scrollFor(m.scrollOffset, m.cursor, height, len(diffLines))
+	end := min(m.scrollOffset+height, len(diffLines))
 
-	start := m.scrollOffset
-	end := start + maxVisible
-	if end > len(m.currentDiff.Lines) {
-		end = len(m.currentDiff.Lines)
-	}
-
-	for i := start; i < end; i++ {
-		line := m.currentDiff.Lines[i]
-		prefix := "  "
-
-		if i == m.cursor {
-			prefix = "▶ "
-		}
-
-		lineNum := fmt.Sprintf("%4d", line.LineNum)
-		content := line.Content
-
-		// Truncate long lines to fit screen width
-		maxContentWidth := m.windowWidth - 12 // Account for prefix, line numbers, and padding
-		if maxContentWidth < 20 {
-			maxContentWidth = 20
-		}
-		if len(content) > maxContentWidth {
-			content = content[:maxContentWidth-3] + "..."
-		}
-
-		var renderedLine string
-		lineText := fmt.Sprintf("%s%s %s", prefix, lineNum, content)
-
+	var rows []string
+	for i := m.scrollOffset; i < end; i++ {
+		line := diffLines[i]
+		content := scrollRight(sanitizeLine(line.Content), m.hScrollOffset)
+		sign, style := " ", equalLineStyle
 		switch line.Type {
-		case differ.DiffEqual:
-			renderedLine = equalLineStyle.Width(m.windowWidth - 2).Render(lineText)
 		case differ.DiffInsert:
-			renderedLine = insertLineStyle.Width(m.windowWidth - 2).Render(fmt.Sprintf("%s%s +%s", prefix, lineNum, content))
+			sign, style = "+", insertLineStyle
 		case differ.DiffDelete:
-			renderedLine = deleteLineStyle.Width(m.windowWidth - 2).Render(fmt.Sprintf("%s%s -%s", prefix, lineNum, content))
+			sign, style = "-", deleteLineStyle
 		}
-
-		b.WriteString(renderedLine)
-		b.WriteString("\n")
+		rows = append(rows, style.Render(fitCell(fmt.Sprintf("%s%4d %s %s", m.cursorMark(i), line.LineNum, sign, content), w)))
 	}
-
-	// Show scroll indicator if needed
-	if len(m.currentDiff.Lines) > maxVisible {
-		var scrollInfo string
-		if m.windowWidth > 50 {
-			scrollInfo = fmt.Sprintf("Showing %d-%d of %d lines", start+1, end, len(m.currentDiff.Lines))
-		} else {
-			scrollInfo = fmt.Sprintf("%d-%d of %d", start+1, end, len(m.currentDiff.Lines))
-		}
-		b.WriteString(helpStyle.Width(m.windowWidth).Render(scrollInfo))
-		b.WriteString("\n")
-	}
-
-	return b.String()
+	return rows
 }
 
-// renderHelpView renders the help screen: a fixed title and footer around a
-// scrollable window of the help body.
+func (m *Model) renderSideBySideRows(w, height int) []string {
+	if len(m.sbsRows) == 0 {
+		return []string{helpStyle.Render(" Both files are empty")}
+	}
+	m.scrollOffset = scrollFor(m.scrollOffset, m.cursor, height, len(m.sbsRows))
+	end := min(m.scrollOffset+height, len(m.sbsRows))
+
+	leftWidth := (w - 1) / 2
+	rightWidth := w - 1 - leftWidth
+	lineNum := func(n int) string {
+		if n > 0 {
+			return fmt.Sprintf("%4d", n)
+		}
+		return "    "
+	}
+
+	var rows []string
+	for i := m.scrollOffset; i < end; i++ {
+		row := m.sbsRows[i]
+		lc := scrollRight(sanitizeLine(row.LeftContent), m.hScrollOffset)
+		rc := scrollRight(sanitizeLine(row.RightContent), m.hScrollOffset)
+		left := fitCell(fmt.Sprintf("%s%s %s", m.cursorMark(i), lineNum(row.LeftLineNum), lc), leftWidth)
+		right := fitCell(fmt.Sprintf("%s %s", lineNum(row.RightLineNum), rc), rightWidth)
+
+		leftStyle, rightStyle := equalLineStyle, equalLineStyle
+		switch row.Type {
+		case differ.SBSDelete:
+			leftStyle, rightStyle = deleteLineStyle, emptyDiffStyle
+		case differ.SBSInsert:
+			leftStyle, rightStyle = emptyDiffStyle, insertLineStyle
+		case differ.SBSModified:
+			leftStyle, rightStyle = deleteLineStyle, insertLineStyle
+		}
+		rows = append(rows, leftStyle.Render(left)+paneBorderStyle.Render("│")+rightStyle.Render(right))
+	}
+	return rows
+}
+
+// ---- Merge pane -------------------------------------------------------------
+
+// saveEffect says what saving the checked changes does to the target. A
+// checked change moves the target towards the other side, so a checked
+// insertion adds a line to the left file but removes one from the right file.
+func saveEffect(selIns, selDel int, target, name string) string {
+	adds, removes := selDel, selIns
+	if target == "left" {
+		adds, removes = selIns, selDel
+	}
+	switch {
+	case adds > 0 && removes > 0:
+		return fmt.Sprintf("saving adds %s and removes %s in %s", plural(adds, "line"), plural(removes, "line"), name)
+	case adds > 0:
+		return fmt.Sprintf("saving adds %s to %s", plural(adds, "line"), name)
+	}
+	return fmt.Sprintf("saving removes %s from %s", plural(removes, "line"), name)
+}
+
+func (m *Model) renderMergePane(w int) (string, []string) {
+	name := sanitizeLine(m.displayNameForFile(m.selectedFile))
+	targetName := sanitizeLine(filepath.Base(m.editablePath(m.mergeTarget)))
+	title := "Merge · " + name
+
+	var lines []string
+	if banner := m.renderStatusBanner(w); banner != "" {
+		lines = append(lines, banner)
+	}
+
+	selIns, totIns, selDel, totDel := 0, 0, 0, 0
+	if m.changeSelection != nil {
+		selIns, totIns, selDel, totDel = m.changeSelection.GetSelectedStats(m.currentDiff)
+	}
+	var state string
+	switch {
+	case m.targetDisk == merge.DiskMissing:
+		state = warnStyle.Render(" ▲ " + targetName + " no longer exists · r reloads")
+	case m.targetDisk == merge.DiskChanged:
+		state = warnStyle.Render(" ▲ Changed on disk · r reloads, s overwrites")
+	case selIns+selDel > 0:
+		state = unsavedStyle.Render(" ○ Unsaved · " + saveEffect(selIns, selDel, m.mergeTarget, targetName))
+	default:
+		state = statusStyle.Render(" ● Saved · matches disk")
+	}
+	lines = append(lines, state)
+	lines = append(lines, keyActionStyle.Render(fmt.Sprintf(" Target: %s (%s) · insertions %d/%d · deletions %d/%d",
+		strings.ToUpper(m.mergeTarget), targetName, selIns, totIns, selDel, totDel)))
+
+	return title, append(lines, m.renderMergeRows(w, m.mergeViewHeight())...)
+}
+
+func (m *Model) renderMergeRows(w, height int) []string {
+	diffLines := m.currentDiff.Lines
+	m.scrollOffset = scrollFor(m.scrollOffset, m.cursor, height, len(diffLines))
+	end := min(m.scrollOffset+height, len(diffLines))
+
+	var rows []string
+	for i := m.scrollOffset; i < end; i++ {
+		line := diffLines[i]
+		content := scrollRight(sanitizeLine(line.Content), m.hScrollOffset)
+		check, sign, style := "   ", " ", equalLineStyle
+		if line.Type != differ.DiffEqual {
+			var selected bool
+			unticked := unselectedDeleteStyle
+			if line.Type == differ.DiffInsert {
+				sign, style, unticked = "+", insertLineStyle, unselectedInsertStyle
+				selected = m.changeSelection != nil && m.changeSelection.IsInsertionSelected(i)
+			} else {
+				sign, style = "-", deleteLineStyle
+				selected = m.changeSelection != nil && m.changeSelection.IsDeletionSelected(i)
+			}
+			check = "[✓]"
+			if !selected {
+				check, style = "[ ]", unticked
+			}
+		}
+		rows = append(rows, style.Render(fitCell(fmt.Sprintf("%s%s%4d %s %s", m.cursorMark(i), check, line.LineNum, sign, content), w)))
+	}
+	return rows
+}
+
+// ---- Copy -------------------------------------------------------------------
+
+func (m *Model) renderCopyView() string {
+	uniqueFiles := m.getUniqueFiles()
+	w, height := m.windowWidth, m.paneInnerHeight()
+
+	selected, eligible := 0, 0
+	for _, relPath := range uniqueFiles {
+		if m.canCopy(relPath) {
+			eligible++
+			if m.copySelection[relPath] {
+				selected++
+			}
+		}
+	}
+	direction := "left → right"
+	if m.copyTarget == "to-left" {
+		direction = "right → left"
+	}
+	title := fmt.Sprintf("Copy %s · %d of %s selected", direction, selected, plural(eligible, "file"))
+
+	m.scrollOffset = scrollFor(m.scrollOffset, m.cursor, height, len(uniqueFiles))
+	end := min(m.scrollOffset+height, len(uniqueFiles))
+	var rows []string
+	for i := m.scrollOffset; i < end; i++ {
+		relPath := uniqueFiles[i]
+		comp := m.allFiles[relPath]
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "▶ "
+		}
+		icon, source, info := "◄", "left only", comp.LeftFile
+		if comp.Source == file.SourceRight {
+			icon, source, info = "►", "right only", comp.RightFile
+		}
+		check := "[-]"
+		if m.canCopy(relPath) {
+			check = "[ ]"
+			if m.copySelection[relPath] {
+				check = "[✓]"
+			}
+		}
+		suffix := fmt.Sprintf(" %s  %s", formatFileSize(info.Size), source)
+		nameWidth := max(1, w-2-len(cursor)-4-2-lipgloss.Width(suffix))
+		row := fmt.Sprintf("%s%s %s %s%s", cursor, check, icon, fitCell(truncatePath(sanitizeLine(relPath), nameWidth), nameWidth), suffix)
+		switch {
+		case !m.canCopy(relPath):
+			row = helpStyle.Render(row)
+		case m.copySelection[relPath]:
+			row = statusStyle.Render(row)
+		}
+		rows = append(rows, row)
+	}
+
+	return m.frame(box(title, rows, w, m.bodyHeight(), true), renderKeys(w,
+		key{"Space", "toggle"}, key{"t", "direction"}, key{"a/n", "all/none"}, key{"s", "copy"}, key{"Esc", "back"}, key{"?", "help"}))
+}
+
+// ---- Open screen ------------------------------------------------------------
+
+func (m *Model) renderOpenView() string {
+	w := m.windowWidth
+	inputWidth := max(10, w-14)
+	var lines []string
+
+	field := func(label, value string, focused bool) string {
+		if focused {
+			return label + focusedInputStyle.Render(fitCell(" "+truncatePath(sanitizeLine(value)+"│", inputWidth-2)+" ", inputWidth))
+		}
+		return label + inputStyle.Render(fitCell(" "+truncatePath(sanitizeLine(value), inputWidth-2)+" ", inputWidth))
+	}
+	suggestions := func(items []string, selected int) {
+		if !m.showSuggestions || len(items) == 0 {
+			return
+		}
+		lines = append(lines, m.renderSuggestions(items, selected)...)
+	}
+
+	lines = append(lines, "", keyActionStyle.Render(" Choose two files or folders to compare."), "")
+	lines = append(lines, field(" Left    ", m.inputLeft, m.focus == focusInputLeft))
+	if m.focus == focusInputLeft {
+		suggestions(m.leftSuggestions, m.leftSuggIndex)
+	}
+	lines = append(lines, field(" Right   ", m.inputRight, m.focus == focusInputRight))
+	if m.focus == focusInputRight {
+		suggestions(m.rightSuggestions, m.rightSuggIndex)
+	}
+	lines = append(lines, "")
+
+	button := func(label string, focused bool) string {
+		if focused {
+			return focusedButtonStyle.Render(label)
+		}
+		return buttonStyle.Render(label)
+	}
+	lines = append(lines, "          "+button("Compare", m.focus == focusViewDiffBtn)+"  "+button("Quit", m.focus == focusQuitBtn))
+	lines = append(lines, "", keyActionStyle.Render(" Or press Ctrl+G to compare git branches and commits."))
+
+	keys := []key{{"Tab", "next"}, {"Enter", "accept / compare"}, {"↑↓", "suggestions"}, {"Ctrl+G", "git"}}
+	if len(m.allFiles) > 0 {
+		keys = append(keys, key{"Esc", "back"})
+	} else {
+		keys = append(keys, key{"Esc", "close list"})
+	}
+	keys = append(keys, key{"Ctrl+C", "quit"}, key{"F1", "help"})
+	return m.frame(strings.Join(lines, "\n"), renderKeys(w, keys...))
+}
+
+// renderSuggestions returns the rows of the path suggestion list.
+func (m *Model) renderSuggestions(suggestions []string, selected int) []string {
+	w := m.windowWidth
+	room := max(1, min(6, m.bodyHeight()-12))
+	start := 0
+	if selected >= room {
+		start = selected - room + 1
+	}
+	end := min(start+room, len(suggestions))
+
+	var rows []string
+	for i := start; i < end; i++ {
+		text := truncatePath(sanitizeLine(suggestions[i]), max(1, w-14))
+		if i == selected {
+			rows = append(rows, "          "+selectedSuggestionStyle.Render(fitCell("→ "+text, max(1, w-12))))
+		} else {
+			rows = append(rows, "            "+text)
+		}
+	}
+	if hidden := len(suggestions) - end + start; hidden > 0 {
+		rows = append(rows, helpStyle.Render(fmt.Sprintf("            … %d more", hidden)))
+	}
+	return rows
+}
+
+// ---- Help -------------------------------------------------------------------
+
 func (m *Model) renderHelpView() string {
-	var b strings.Builder
-
-	b.WriteString(titleStyle.Render("Help - File Comparison Tool " + Version))
-	b.WriteString("\n\n")
-
 	lines := m.helpLines()
 	start := min(m.helpScroll, m.helpMaxScroll())
 	end := min(start+m.helpPageHeight(), len(lines))
-	b.WriteString(strings.Join(lines[start:end], "\n"))
-	b.WriteString("\n\n")
-
-	footer := fmt.Sprintf("↑/↓ j/k: Scroll • PgUp/PgDn: Page • g/G: Top/Bottom • Esc/?: Back  (%d-%d of %d)",
-		start+1, end, len(lines))
-	b.WriteString(helpStyle.Render(footer))
-
-	return b.String()
+	return m.frame(strings.Join(lines[start:end], "\n"), renderKeys(m.windowWidth,
+		key{"j/k", "scroll"}, key{"PgUp/PgDn", "page"}, key{"g/G", "top/bottom"},
+		key{fmt.Sprintf("%d-%d of %d", start+1, end, len(lines)), ""}, key{"Esc", "back"}))
 }
 
-// helpPageHeight is the number of help body lines that fit between the
-// title and the footer.
-func (m *Model) helpPageHeight() int {
-	if m.windowHeight == 0 {
-		return len(m.helpLines())
-	}
-	return max(1, m.windowHeight-4)
-}
+// helpPageHeight is the number of help lines that fit on screen.
+func (m *Model) helpPageHeight() int { return m.bodyHeight() }
 
 // helpMaxScroll is the largest useful help scroll offset.
 func (m *Model) helpMaxScroll() int {
@@ -601,651 +595,148 @@ func (m *Model) helpLines() []string {
 	return strings.Split(m.renderHelpBody(), "\n")
 }
 
-// renderHelpBody renders the scrollable part of the help screen
+const helpText = `Getting started
+  katcmp left right      Compare two files or folders
+  katcmp --git           Compare HEAD with the working tree
+  katcmp                 Choose paths on the open screen
+
+  The file list and the diff sit side by side at 100 columns or wider.
+  In a narrower terminal, one shows at a time with the same keys.
+
+File list
+  j/k or ↑/↓             Move; the diff follows the selection
+  g/G, PgUp/PgDn         Top/bottom, page up/down
+  Enter, Tab or Ctrl+D   Open the diff, on its first change
+  /                      Filter by name (Enter keeps it, Esc clears it)
+  m                      Merge the selected file
+  c                      Copy files that exist on only one side
+  r                      Reload from disk
+  x                      Swap left and right
+  F                      Open both folders in your diff tool
+  o                      Change the paths
+  Ctrl+G                 Compare git branches and commits
+  q                      Quit
+
+Diff
+  j/k or ↑/↓             Move a line
+  g/G, PgUp/PgDn         Top/bottom, page up/down
+  ] / [                  Next/previous change
+  h/l or ←/→             Scroll sideways
+  s                      Switch between unified and side-by-side
+  n / p                  Next/previous file
+  Tab or Esc             Back to the file list
+  m                      Merge (on a git conflict: resolve it)
+  e / E                  Edit the right / left file at this line
+  D                      Open the file pair in your diff tool
+  R                      Resolve a git conflict in your merge tool
+  r / x / c              Reload / swap / copy
+
+Merge
+  Tick the changes to apply, choose a target and save over that file. A ticked
+  change makes the target match the other side, so with target RIGHT a ticked
+  insertion is removed from the right file. The status line says what saving
+  will do.
+
+  Space                  Tick the change on this line
+  Enter                  Tick the whole block
+  ] / [                  Next/previous change
+  t                      Switch the target between left and right
+  a / n                  Tick all / none
+  s                      Save (the old version is kept as .orig)
+  r                      Reload from disk
+  h/l or ←/→             Scroll sideways
+  Esc                    Back to the diff
+
+  ● Saved                Nothing is ticked and the file matches this view
+  ○ Unsaved              Ticked changes aren't in the file yet
+  ▲ Changed on disk      The file changed after it was loaded. r reloads;
+                         s warns, then a second s replaces those edits
+
+Conflicts (m on a git conflict)
+  j/k or ] / [           Move between conflicts
+  o / t                  Take ours / theirs
+  b / B                  Take both, ours / theirs first
+  u / U                  Undo this choice / every choice
+  O / T                  Take ours / theirs for every conflict
+  s                      Save the choices; the rest keep their markers
+  A                      Save and mark resolved (git add)
+  e / R                  Edit the file / use your merge tool
+  Esc                    Back to the diff
+
+Copy (folders only)
+  Space or Enter         Tick a file
+  t                      Switch the direction
+  a / n                  Tick all / none
+  s                      Copy the ticked files
+  Esc                    Back to the file list
+
+Open screen
+  Type or paste          Paths are suggested as you type
+  ↑/↓ or Tab             Choose a suggestion
+  Enter                  Accept it, then move on and compare
+  Shift+Tab              Previous field
+  Ctrl+G                 Compare git branches and commits
+  F1                     Help (? is an ordinary character here)
+  Ctrl+C                 Quit
+
+Git picker (Ctrl+G)
+  Type                   Enter any ref, or filter the list
+  ↑/↓, PgUp/PgDn         Choose from branches, tags and recent commits
+  Enter                  Accept the choice / compare when none is chosen
+  Tab                    Switch between the left and right ref
+  Ctrl+U                 Clear the ref (right blank = working tree)
+  Esc                    Clear the choice, then go back
+
+File list symbols
+`
+
+const helpTextEnd = `
+Merge status
+  After each save, katcmp checks that the file on disk matches the result when
+  read back, that the .orig backup matches the previous version, and that no
+  <<<<<<< or >>>>>>> lines remain. The status lasts until you quit, and clears
+  if the file changes. "Safe" doesn't mean the two sides now match, so unticked
+  changes only show as "skipped". Only the latest backup is kept, so a second
+  save overwrites it.
+
+External tools
+  Editor                 $KATCMP_EDITOR, then $VISUAL, then $EDITOR, then the
+                         OS default (terminal editors are preferred here)
+  Diff/merge tool        git config diff.tool / merge.tool (e.g. nvimdiff, meld)
+                         Terminal tools are preferred here
+  As a diff tool (WSL)   Other programs should run: katcmp-win --wait
+                         (see katcmp-win --help)
+
+Config files
+  katcmp has no config file of its own; tools are read from git config:
+  Global                 ~/.gitconfig or ~/.config/git/config
+                         (Windows: %USERPROFILE%\.gitconfig)
+  Per repository         <repo>/.git/config (overrides global)
+  Editor variables       Set in your shell profile (~/.bashrc, ~/.zshrc, ...)
+
+Only text files are listed; other files are detected and skipped.`
+
+// renderHelpBody renders the scrollable part of the help screen.
 func (m *Model) renderHelpBody() string {
 	var b strings.Builder
-
-	help := `File Selection Mode:
-  Tab              Switch between left/right input fields (or cycle suggestions)
-  Enter            Load the entered path / Accept selected suggestion
-  ↑/↓              Navigate through common files list / Navigate suggestions
-  Esc              Clear path suggestions
-  Ctrl+D           Start comparing selected files
-  Ctrl+G           Compare git refs (branch / commit picker)
-  ?                Show this help screen
-  Q/Ctrl+C         Quit application
-
-Git Ref Picker (Ctrl+G):
-  Type             Enter any ref, or filter the list of detected refs
-  ↑/↓ PgUp/PgDn    Choose from common refs, branches, tags and recent commits
-  Enter            Accept the chosen ref / Compare when nothing is chosen
-  Tab              Switch between left and right ref
-  Ctrl+U           Clear the ref (right side blank = working tree)
-  Esc              Clear the choice / Back to file selection
-
-Path Suggestions:
-  Type any path    Smart suggestions appear automatically
-  ↑/↓              Navigate through suggestions
-  Tab              Cycle to next suggestion
-  Enter            Accept selected suggestion
-  Esc              Cancel suggestions
-
-Diff View Mode:
-  ↑/↓ or j/k       Navigate through diff lines
-  g                Go to top of diff
-  G                Go to bottom of diff
-  ] / [            Jump to next / previous change
-  s                Switch view mode (Unified ↔ Side-by-Side)
-  n                Next common file
-  p                Previous common file
-  m                Enter merge mode
-  c                Enter copy mode (for unique files)
-  e                Edit the right (or working tree) file at the cursor line
-  E                Edit the left file at the cursor line
-  D                Open the file pair in your external diff tool
-  R                Resolve a git conflict with git mergetool
-  Esc              Return to file selection
-  ?                Show this help screen
-  Q/Ctrl+C         Quit application
-
-Side-by-Side View Mode:
-  ↑/↓ or j/k       Navigate through diff lines
-  h/l or ←/→       Visual focus left/right (for reference)
-  g                Go to top of diff
-  G                Go to bottom of diff
-  ] / [            Jump to next / previous change
-  s                Switch to Unified view mode
-  n                Next common file
-  p                Previous common file
-  m                Enter merge mode
-  c                Enter copy mode (for unique files)
-  e                Edit the right (or working tree) file at the cursor line
-  E                Edit the left file at the cursor line
-  D                Open the file pair in your external diff tool
-  R                Resolve a git conflict with git mergetool
-  Esc              Return to file selection
-  ?                Show this help screen
-  Q/Ctrl+C         Quit application
-
-External Tools:
-  Editor           $KATCMP_EDITOR, then $VISUAL, then $EDITOR, then the OS default
-                   (a terminal $VISUAL/$EDITOR is preferred over a GUI one here)
-  Diff/merge tool  git config diff.tool / merge.tool (e.g. meld, kdiff3, nvimdiff)
-                   terminal tools (nvimdiff, emacsclient -nw, ...) are preferred here
-  As a diff tool   Under WSL, other programs should run: katcmp-win --wait
-                   (keeps their temporary files until the GUI window closes;
-                   see katcmp-win --help)
-
-Config Files:
-  katcmp has no config file of its own; tools are read from git config:
-  Global           ~/.gitconfig or ~/.config/git/config
-                   (Windows: %USERPROFILE%\.gitconfig)
-  Per repository   <repo>/.git/config (overrides global)
-  Editor vars      set in your shell profile (~/.bashrc, ~/.zshrc, ...)
-
-Merge Mode:
-  ↑/↓ or j/k       Navigate through diff lines
-  ] / [            Jump to next / previous change
-  Space            Toggle the change on the current line
-  Enter            Toggle the whole block of changes
-  t                Switch merge target (left/right; only real files)
-  a                Select all changes
-  n                Select no changes
-  s                Save over the target file (old version kept as .orig)
-  Esc              Return to diff view
-  ?                Show this help screen
-  Q/Ctrl+C         Quit application
-
-Conflict Mode (m on a git conflict):
-  ↑/↓ j/k ] [      Move between conflicts
-  o / t            Take ours / theirs
-  b / B            Take both (ours first / theirs first)
-  u                Undo the choice
-  O / T            Take ours / theirs for every conflict
-  s                Save the chosen resolutions (others keep markers)
-  A                Save and mark resolved (git add)
-  e                Edit the file at this conflict
-  R                Resolve in your external merge tool
-  Esc              Return to diff view
-  ?                Show this help screen
-  Q/Ctrl+C         Quit application
-
-Copy Mode (Directory Comparison Only):
-  ↑/↓ or j/k       Navigate through unique files
-  Space/Enter      Toggle selection of current file to copy
-  t                Switch copy target (to-left/to-right)
-  a                Select all unique files
-  n                Select no files
-  s                Copy selected files to target directory
-  Esc              Return to file selection
-  ?                Show this help screen
-  Q/Ctrl+C         Quit application
-
-Color Legend:
-  `
-
-	b.WriteString(help)
-
-	// Color examples
-	b.WriteString(insertLineStyle.Render("Blue background: Added lines (+)"))
-	b.WriteString("\n")
-	b.WriteString(deleteLineStyle.Render("Red background: Deleted lines (-)"))
-	b.WriteString("\n")
-	b.WriteString(equalLineStyle.Render("Gray text: Unchanged lines"))
-	b.WriteString("\n")
-	b.WriteString(selectedChangeStyle.Render("Yellow background: Selected changes (merge mode)"))
-	b.WriteString("\n")
-	b.WriteString(unselectedChangeStyle.Render("Strikethrough: Unselected changes (merge mode)"))
-	b.WriteString("\n\n")
-
-	fileIndicators := `File Status Indicators:
-  `
-	b.WriteString(fileIndicators)
-
-	// File status examples
-	identicalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Bold(true)
-	differentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true)
-	leftOnlyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#0066FF")).Bold(true)
-	rightOnlyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Bold(true)
-
-	b.WriteString(identicalStyle.Render("✓ Green checkmark: Identical files (same content)"))
-	b.WriteString("\n")
-	b.WriteString(differentStyle.Render("✗ Red X: Different files (content differs)"))
-	b.WriteString("\n")
-	b.WriteString(leftOnlyStyle.Render("◄ Blue arrow: File exists only in LEFT directory"))
-	b.WriteString("\n")
-	b.WriteString(rightOnlyStyle.Render("► Orange arrow: File exists only in RIGHT directory"))
-	b.WriteString("\n\n")
-
-	instructions := `Instructions:
-1. Enter paths to files or directories in the input fields
-   - Path suggestions appear automatically as you type
-   - Use ↑/↓ or Tab to navigate through suggestions
-   - Press Enter to accept a suggestion or Esc to dismiss
-2. Press Enter to load each path
-3. Use ↑/↓ to select which file to compare (shows ALL files, not just common ones)
-4. Press Ctrl+D to start comparing selected file
-5. Navigate through the diff using arrow keys or j/k
-6. Use n/p to switch between different files
-7. Press 'm' in diff view to enter merge mode
-8. In merge mode, select which changes to apply and press 's' to save
-9. Press 'c' in file selection to enter copy mode for unique files
-10. In copy mode, select files to copy and press 's' to copy them
-
-Merge Workflow:
-- Enter merge mode from diff view with 'm'
-- Navigate with ↑/↓ or j/k through changes
-- Toggle individual changes with Space/Enter
-- Use 'a' to select all or 'n' to select none
-- Switch target file with 't' (left or right)
-- Save merged result with 's' - creates .merged file
-- Apply changes in either direction (left-to-right or right-to-left)
-
-Copy Workflow (for directories with unique files):
-- Enter copy mode from file selection with 'c'
-- Navigate with ↑/↓ or j/k through unique files
-- Toggle individual files with Space/Enter
-- Use 'a' to select all or 'n' to select none
-- Switch copy direction with 't' (to-left or to-right)
-- Copy selected files with 's' - files are copied to target directory
-
-File Comparison Notes:
-- Shows ALL files from both directories, not just common ones
-- Files unique to one side show [LEFT ONLY] or [RIGHT ONLY] tags
-- Unique files can still be "compared" (shown as all additions or deletions)
-- Unique files can be easily copied between directories using copy mode
-- Only text files are included (detects common extensions automatically)
-- Path suggestions include files and directories from your current working directory`
-
-	b.WriteString(instructions)
-
-	return b.String()
-}
-
-// renderSuggestions renders path suggestions
-func (m *Model) renderSuggestions(suggestions []string, selectedIndex int) string {
-	if len(suggestions) == 0 {
-		return ""
+	b.WriteString(helpText)
+	for _, row := range []struct {
+		style lipgloss.Style
+		icon  string
+		text  string
+	}{
+		{identicalStyle, "✓", "Same on both sides"},
+		{differentStyle, "✗", "Different"},
+		{leftOnlyStyle, "◄", "Only on the left"},
+		{rightOnlyStyle, "►", "Only on the right"},
+		{conflictStateStyle, "⚠", "Has unresolved git merge conflicts"},
+		{statusStyle, "◆", "Saved this session and passed its checks (merged · safe)"},
+		{warnStyle, "▲", "Saved this session, but a check failed (merged · check)"},
+	} {
+		b.WriteString("  " + row.style.Render(row.icon) + " " + row.text + "\n")
 	}
-
-	// Limit suggestions based on available space
-	maxSuggestions := 6
-	availableHeight := m.windowHeight - 20
-	if availableHeight > 0 && availableHeight < maxSuggestions {
-		maxSuggestions = availableHeight
-	}
-	if maxSuggestions < 3 {
-		maxSuggestions = 3
-	}
-
-	displaySuggestions := suggestions
-	if len(displaySuggestions) > maxSuggestions {
-		displaySuggestions = displaySuggestions[:maxSuggestions]
-	}
-
-	maxSuggestionWidth := m.windowWidth - 10
-	if maxSuggestionWidth < 30 {
-		maxSuggestionWidth = 30
-	}
-
-	var suggestionLines []string
-	for i, suggestion := range displaySuggestions {
-		// Truncate suggestion if too long
-		displaySuggestion := suggestion
-		if len(displaySuggestion) > maxSuggestionWidth {
-			displaySuggestion = "..." + displaySuggestion[len(displaySuggestion)-maxSuggestionWidth+3:]
-		}
-
-		if i == selectedIndex && selectedIndex < len(displaySuggestions) {
-			suggestionLines = append(suggestionLines, selectedSuggestionStyle.Width(maxSuggestionWidth).Render("  → "+displaySuggestion))
-		} else {
-			suggestionLines = append(suggestionLines, "    "+displaySuggestion)
-		}
-	}
-
-	content := strings.Join(suggestionLines, "\n")
-	if len(suggestions) > maxSuggestions {
-		content += helpStyle.Render(fmt.Sprintf("\n... and %d more", len(suggestions)-maxSuggestions))
-	}
-	return suggestionStyle.Width(m.windowWidth - 4).Render(content)
-}
-
-// renderMergeView renders the merge interface
-func (m *Model) renderMergeView() string {
-	if m.currentDiff == nil {
-		return "No diff loaded for merging"
-	}
-
-	var b strings.Builder
-
-	// Header
-	header := fmt.Sprintf("Merge Mode - Target: %s (%s; old version kept as .orig)",
-		strings.ToUpper(m.mergeTarget), filepath.Base(m.editablePath(m.mergeTarget)))
-	b.WriteString(mergeHeaderStyle.Width(m.windowWidth).Render(header))
-	b.WriteString("\n\n")
-
-	// Statistics
-	if m.changeSelection != nil {
-		selIns, totIns, selDel, totDel := m.changeSelection.GetSelectedStats(m.currentDiff)
-		stats := fmt.Sprintf("Selected: %d/%d insertions, %d/%d deletions", selIns, totIns, selDel, totDel)
-		b.WriteString(helpStyle.Width(m.windowWidth).Render(stats))
-		b.WriteString("\n\n")
-	}
-	if m.errorMsg != "" {
-		b.WriteString(errorStyle.Render(m.errorMsg))
-		b.WriteString("\n\n")
-	}
-
-	// Diff content with selection indicators
-	b.WriteString(m.renderMergeContent())
-
-	// Help text
-	b.WriteString("\n")
-	var helpText string
-	if m.windowWidth > 80 {
-		helpText = "Space: Toggle line • Enter: Toggle block • ]/[: Next/Prev change • t: Switch target • a: All • n: None • s: Save • Esc: Back • ?: Help"
-	} else if m.windowWidth > 60 {
-		helpText = "Space: Line • Enter: Block • ]/[: Changes • t: Target • a/n: All/None • s: Save • Esc: Back"
-	} else {
-		helpText = "Spc:Line Ent:Block t:Target a/n:All/None s:Save Esc:Back"
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth).Render(helpText))
-
-	return b.String()
-}
-
-// renderCopyView renders the copy interface for copying unique files
-func (m *Model) renderCopyView() string {
-	if len(m.allFiles) == 0 {
-		return "No files loaded for copying"
-	}
-
-	uniqueFiles := m.getUniqueFiles()
-	if len(uniqueFiles) == 0 {
-		return "No unique files to copy"
-	}
-
-	var b strings.Builder
-
-	// Header
-	var targetDesc string
-	if m.copyTarget == "to-right" {
-		targetDesc = "to RIGHT directory"
-	} else {
-		targetDesc = "to LEFT directory"
-	}
-	header := fmt.Sprintf("Copy Mode - Target: %s", targetDesc)
-	b.WriteString(mergeHeaderStyle.Width(m.windowWidth).Render(header))
-	b.WriteString("\n\n")
-
-	// Statistics
-	selectedCount := 0
-	totalCount := len(uniqueFiles)
-	for _, relPath := range uniqueFiles {
-		if m.copySelection[relPath] {
-			selectedCount++
-		}
-	}
-	stats := fmt.Sprintf("Selected: %d/%d unique files to copy", selectedCount, totalCount)
-	b.WriteString(helpStyle.Width(m.windowWidth).Render(stats))
-	b.WriteString("\n\n")
-
-	// Copy content with selection indicators
-	b.WriteString(m.renderCopyContent())
-
-	// Help text
-	b.WriteString("\n")
-	var helpText string
-	if m.windowWidth > 80 {
-		helpText = "Space/Enter: Toggle • t: Switch target • a: Select all • n: Select none • s: Copy files • Esc: Back • ?: Help"
-	} else if m.windowWidth > 60 {
-		helpText = "Space: Toggle • t: Target • a: All • n: None • s: Copy • Esc: Back"
-	} else {
-		helpText = "Space:Toggle t:Target a:All n:None s:Copy Esc:Back"
-	}
-	b.WriteString(helpStyle.Width(m.windowWidth).Render(helpText))
-
-	return b.String()
-}
-
-// renderCopyContent renders the unique files with selection indicators
-func (m *Model) renderCopyContent() string {
-	uniqueFiles := m.getUniqueFiles()
-	if len(uniqueFiles) == 0 {
-		return "No unique files found"
-	}
-
-	var b strings.Builder
-	maxVisible := m.windowHeight - 12 // Account for header, stats, and help text
-	if maxVisible < 5 {
-		maxVisible = 5
-	}
-
-	start := m.scrollOffset
-	end := start + maxVisible
-	if end > len(uniqueFiles) {
-		end = len(uniqueFiles)
-	}
-
-	for i := start; i < end; i++ {
-		relPath := uniqueFiles[i]
-		fileComp := m.allFiles[relPath]
-
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "▶ "
-		}
-
-		// Determine file source and status
-		var statusIcon, sourceInfo string
-		var fileInfo *file.FileInfo
-
-		if fileComp.Source == file.SourceLeft {
-			statusIcon = "◄"
-			sourceInfo = "[LEFT ONLY]"
-			fileInfo = fileComp.LeftFile
-		} else {
-			statusIcon = "►"
-			sourceInfo = "[RIGHT ONLY]"
-			fileInfo = fileComp.RightFile
-		}
-
-		// Check if this file should be copied based on target
-		canCopy := false
-		if m.copyTarget == "to-right" && fileComp.Source == file.SourceLeft {
-			canCopy = true
-		} else if m.copyTarget == "to-left" && fileComp.Source == file.SourceRight {
-			canCopy = true
-		}
-
-		// Selection indicator
-		var selectionIcon string
-		if !canCopy {
-			selectionIcon = "[-]" // Cannot copy (wrong direction)
-		} else if m.copySelection[relPath] {
-			selectionIcon = "[✓]" // Selected for copying
-		} else {
-			selectionIcon = "[ ]" // Not selected
-		}
-
-		// File size
-		sizeInfo := fmt.Sprintf("(%s)", formatFileSize(fileInfo.Size))
-
-		// Truncate filename if needed
-		maxContentWidth := m.windowWidth - 25 // Account for cursor, icons, size, etc.
-		if maxContentWidth < 20 {
-			maxContentWidth = 20
-		}
-		displayPath := relPath
-		if len(displayPath) > maxContentWidth {
-			displayPath = displayPath[:maxContentWidth-3] + "..."
-		}
-
-		// Render line
-		lineText := fmt.Sprintf("%s%s %s %s %s %s", cursor, selectionIcon, statusIcon, displayPath, sizeInfo, sourceInfo)
-
-		var renderedLine string
-		if !canCopy {
-			// Grayed out for files that can't be copied in current direction
-			renderedLine = helpStyle.Width(m.windowWidth - 2).Render(lineText)
-		} else if m.copySelection[relPath] {
-			// Selected files
-			renderedLine = selectedChangeStyle.Width(m.windowWidth - 2).Render(lineText)
-		} else {
-			// Unselected files
-			renderedLine = lineText
-		}
-
-		b.WriteString(renderedLine)
-		b.WriteString("\n")
-	}
-
-	// Show scroll indicator if needed
-	if len(uniqueFiles) > maxVisible {
-		var scrollInfo string
-		if m.windowWidth > 50 {
-			scrollInfo = fmt.Sprintf("Showing %d-%d of %d unique files", start+1, end, len(uniqueFiles))
-		} else {
-			scrollInfo = fmt.Sprintf("%d-%d of %d", start+1, end, len(uniqueFiles))
-		}
-		b.WriteString(helpStyle.Width(m.windowWidth).Render(scrollInfo))
-		b.WriteString("\n")
-	}
-
-	return b.String()
-}
-
-// renderSideBySideContent renders the diff in a two-column layout using
-// precomputed SideBySideRows so that changed lines appear aligned side-by-side.
-func (m *Model) renderSideBySideContent() string {
-	if len(m.sbsRows) == 0 {
-		return "No differences found"
-	}
-
-	var b strings.Builder
-	maxVisible := m.windowHeight - 10 // account for header, stats, help
-	if maxVisible < 5 {
-		maxVisible = 5
-	}
-
-	sideWidth := (m.windowWidth - 5) / 2 // -5 for " │ " separator
-	if sideWidth < 20 {
-		sideWidth = 20
-	}
-	maxContentWidth := sideWidth - 8 // leave room for cursor (2) + line num (4) + space (1) + margin (1)
-	if maxContentWidth < 10 {
-		maxContentWidth = 10
-	}
-
-	start := m.scrollOffset
-	end := start + maxVisible
-	if end > len(m.sbsRows) {
-		end = len(m.sbsRows)
-	}
-
-	for i := start; i < end; i++ {
-		row := m.sbsRows[i]
-
-		cursorStr := "  "
-		if i == m.cursor {
-			cursorStr = "▶ "
-		}
-
-		// Format line number gutters
-		leftNumStr := "    "
-		if row.LeftLineNum > 0 {
-			leftNumStr = fmt.Sprintf("%4d", row.LeftLineNum)
-		}
-		rightNumStr := "    "
-		if row.RightLineNum > 0 {
-			rightNumStr = fmt.Sprintf("%4d", row.RightLineNum)
-		}
-
-		// Apply horizontal scroll then truncate to fit column
-		lc := row.LeftContent
-		rc := row.RightContent
-		if m.hScrollOffset > 0 {
-			if m.hScrollOffset < len(lc) {
-				lc = lc[m.hScrollOffset:]
-			} else {
-				lc = ""
-			}
-			if m.hScrollOffset < len(rc) {
-				rc = rc[m.hScrollOffset:]
-			} else {
-				rc = ""
-			}
-		}
-		if len(lc) > maxContentWidth {
-			lc = lc[:maxContentWidth-3] + "..."
-		}
-		if len(rc) > maxContentWidth {
-			rc = rc[:maxContentWidth-3] + "..."
-		}
-
-		var leftSide, rightSide string
-		switch row.Type {
-		case differ.SBSEqual:
-			leftSide = equalLineStyle.Width(sideWidth).Render(fmt.Sprintf("%s%s %s", cursorStr, leftNumStr, lc))
-			rightSide = equalLineStyle.Width(sideWidth).Render(fmt.Sprintf("  %s %s", rightNumStr, rc))
-		case differ.SBSDelete:
-			leftSide = deleteLineStyle.Width(sideWidth).Render(fmt.Sprintf("%s%s %s", cursorStr, leftNumStr, lc))
-			rightSide = emptyDiffStyle.Width(sideWidth).Render(fmt.Sprintf("  %s", rightNumStr))
-		case differ.SBSInsert:
-			leftSide = emptyDiffStyle.Width(sideWidth).Render(fmt.Sprintf("%s%s", cursorStr, leftNumStr))
-			rightSide = insertLineStyle.Width(sideWidth).Render(fmt.Sprintf("  %s %s", rightNumStr, rc))
-		case differ.SBSModified:
-			leftSide = deleteLineStyle.Width(sideWidth).Render(fmt.Sprintf("%s%s %s", cursorStr, leftNumStr, lc))
-			rightSide = insertLineStyle.Width(sideWidth).Render(fmt.Sprintf("  %s %s", rightNumStr, rc))
-		}
-
-		b.WriteString(leftSide + " │ " + rightSide)
-		b.WriteString("\n")
-	}
-
-	if len(m.sbsRows) > maxVisible {
-		var scrollInfo string
-		if m.windowWidth > 50 {
-			scrollInfo = fmt.Sprintf("Showing %d-%d of %d lines", start+1, end, len(m.sbsRows))
-		} else {
-			scrollInfo = fmt.Sprintf("%d-%d of %d", start+1, end, len(m.sbsRows))
-		}
-		b.WriteString(helpStyle.Width(m.windowWidth).Render(scrollInfo))
-		b.WriteString("\n")
-	}
-
-	return b.String()
-}
-
-func (m *Model) renderMergeContent() string {
-	if m.currentDiff == nil || len(m.currentDiff.Lines) == 0 {
-		return "No differences found"
-	}
-
-	var b strings.Builder
-	maxVisible := m.mergeViewHeight()
-
-	start := m.scrollOffset
-	end := start + maxVisible
-	if end > len(m.currentDiff.Lines) {
-		end = len(m.currentDiff.Lines)
-	}
-
-	for i := start; i < end; i++ {
-		line := m.currentDiff.Lines[i]
-		prefix := "  "
-		cursor := "  "
-
-		if i == m.cursor {
-			cursor = "▶ "
-		}
-
-		lineNum := fmt.Sprintf("%4d", line.LineNum)
-		content := line.Content
-
-		// Truncate long lines to fit screen width
-		maxContentWidth := m.windowWidth - 16 // Account for prefix, cursor, line numbers, and padding
-		if maxContentWidth < 20 {
-			maxContentWidth = 20
-		}
-		if len(content) > maxContentWidth {
-			content = content[:maxContentWidth-3] + "..."
-		}
-
-		var renderedLine string
-		var selected bool
-
-		switch line.Type {
-		case differ.DiffEqual:
-			lineText := fmt.Sprintf("%s%s%s %s", cursor, prefix, lineNum, content)
-			renderedLine = equalLineStyle.Width(m.windowWidth - 2).Render(lineText)
-
-		case differ.DiffInsert:
-			if m.changeSelection != nil {
-				selected = m.changeSelection.IsInsertionSelected(i)
-			}
-
-			if selected {
-				prefix = "[✓]"
-				lineText := fmt.Sprintf("%s%s%s +%s", cursor, prefix, lineNum, content)
-				renderedLine = selectedChangeStyle.Width(m.windowWidth - 2).Render(lineText)
-			} else {
-				prefix = "[ ]"
-				lineText := fmt.Sprintf("%s%s%s +%s", cursor, prefix, lineNum, content)
-				renderedLine = unselectedChangeStyle.Width(m.windowWidth - 2).Render(lineText)
-			}
-
-		case differ.DiffDelete:
-			if m.changeSelection != nil {
-				selected = m.changeSelection.IsDeletionSelected(i)
-			}
-
-			if selected {
-				prefix = "[✓]"
-				lineText := fmt.Sprintf("%s%s%s -%s", cursor, prefix, lineNum, content)
-				renderedLine = selectedChangeStyle.Width(m.windowWidth - 2).Render(lineText)
-			} else {
-				prefix = "[ ]"
-				lineText := fmt.Sprintf("%s%s%s -%s", cursor, prefix, lineNum, content)
-				renderedLine = unselectedChangeStyle.Width(m.windowWidth - 2).Render(lineText)
-			}
-		}
-
-		b.WriteString(renderedLine)
-		b.WriteString("\n")
-	}
-
-	// Show scroll indicator if needed
-	if len(m.currentDiff.Lines) > maxVisible {
-		var scrollInfo string
-		if m.windowWidth > 50 {
-			scrollInfo = fmt.Sprintf("Showing %d-%d of %d lines", start+1, end, len(m.currentDiff.Lines))
-		} else {
-			scrollInfo = fmt.Sprintf("%d-%d of %d", start+1, end, len(m.currentDiff.Lines))
-		}
-		b.WriteString(helpStyle.Width(m.windowWidth).Render(scrollInfo))
-		b.WriteString("\n")
-	}
-
+	b.WriteString("\nDiff colors\n")
+	b.WriteString("  " + insertLineStyle.Render(" + Added line ") + "  " + deleteLineStyle.Render(" - Deleted line ") + "  " + unselectedInsertStyle.Render(" Unticked + ") + " " + unselectedDeleteStyle.Render(" Unticked - ") + "\n")
+	b.WriteString(helpTextEnd)
 	return b.String()
 }
