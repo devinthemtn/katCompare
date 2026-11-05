@@ -543,3 +543,21 @@ func TestLateDiskCheckDoesNotChangeTheOpenFile(t *testing.T) {
 		t.Errorf("b.txt = %q", got)
 	}
 }
+
+func TestFontSettings(t *testing.T) {
+	a := NewApp(nil)
+	s := a.GetSettings()
+	if s.FontFamily != "" || s.FontScale != 1 || s.DiffFontFamily != "" || s.DiffFontSize != 12.5 {
+		t.Errorf("defaults: %+v", s)
+	}
+	writeConfig(t, "[gui]\nfont_family = \"Segoe UI\"\nfont_size = 19.5\ndiff_font_family = \"Consolas\"\ndiff_font_size = 15\n")
+	s = a.GetSettings()
+	if s.FontFamily != "Segoe UI" || s.FontScale != 1.5 || s.DiffFontFamily != "Consolas" || s.DiffFontSize != 15 || s.ConfigError != "" {
+		t.Errorf("set: %+v", s)
+	}
+	writeConfig(t, "[gui]\nfont_family = \"x; y\"\nfont_size = 20\n")
+	s = a.GetSettings()
+	if s.ConfigError == "" || s.FontFamily != "" || s.FontScale != 1 {
+		t.Errorf("bad family should give all defaults: %+v", s)
+	}
+}

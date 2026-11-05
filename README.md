@@ -355,11 +355,15 @@ editor = ""  # ahead of $KATCMP_EDITOR, $VISUAL and $EDITOR; see below
 
 [gui]
 auto_collapse_paths = false  # collapse the paths bar after you run Compare
-diff_font_size = 12.5        # the size of the diff text, from 8 to 32
+font_family = ""             # the interface's font; empty is the built-in one
+font_size = 13               # the interface's size, from 8 to 32
+diff_font_family = ""        # the diff text's font; empty is the built-in one
+diff_font_size = 12.5        # the diff text's size, from 8 to 32
 ```
 
 - **`ignore`** uses simple matching, not full `.gitignore` syntax. A name or wildcard matches at any depth, one containing `/` matches from the compared folder, and one ending in `/` matches only folders. Ignored folders aren't read at all, so listing `node_modules` also saves the time and memory of loading it. A path you name directly is always compared.
 - **`ignore_line_endings` and `ignore_whitespace`** change what counts as a difference, and the file header says when either is on, because a file can show as the same while its bytes differ. Saving a merge keeps the target's own text on every line it doesn't change. With `ignore_line_endings` on, lines brought across take the target's most common line ending, so a merge can't leave a mixed file.
+- **Fonts** are for the GUI, since a terminal chooses its own. In the GUI, `Ctrl+=` and `Ctrl+-` make all the text larger or smaller on the fly, staying within 8 to 32, and `Ctrl+0` goes back to the sizes in this file. That zoom is remembered between runs, and the file isn't changed. In the TUI, use your terminal's own zoom, which is `Ctrl+=` and `Ctrl+-` in Windows Terminal and many others: the layout adjusts to fit. `font_family` and `diff_font_family` take the name of a font you have installed, or a list to try in order, such as `"Cascadia Code, Consolas"`. A font that isn't installed falls back to the built-in one. A monospaced font keeps columns lined up in the diff. `font_size` scales the whole interface in proportion, buttons included
 - **`editor`**: put double quotes around a path with spaces, and on Windows wrap the whole value in single quotes so backslashes work: `editor = '"C:\Program Files\Notepad++\notepad++.exe" -n'`. An editor that needs a terminal is skipped in the GUI, so the same setting can suit the TUI.
 
 Edits apply on your next comparison, with no restart, except `default_view` and the TUI's `default_merge_target`, which are read when the app starts. If a setting is invalid or the file can't be read, the app uses all the defaults, says what's wrong, and leaves the file for you to fix.

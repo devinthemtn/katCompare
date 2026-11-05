@@ -26,11 +26,14 @@
     --insert-border: #3b82f6;
     --delete-bg: rgba(248, 113, 113, 0.22);
     --delete-border: #f87171;
-    --control-h: 34px;
-    --control-h-sm: 28px;
+    --font-scale: 1; /* font_size in the config file, relative to the default */
+    --font-ui-default: "Nunito", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-diff-default: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --control-h: calc(34px * var(--font-scale));
+    --control-h-sm: calc(28px * var(--font-scale));
     --radius: 7px;
     color-scheme: dark;
-    font-family: "Nunito", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--font-ui, var(--font-ui-default));
 }
 
 * {
@@ -92,7 +95,7 @@ input[type="text"] {
     padding: 6px 14px;
     border-radius: 6px;
     font-weight: 700;
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     transition: background 0.12s, color 0.12s;
 }
 
@@ -122,7 +125,7 @@ input[type="text"] {
 }
 
 .path-field label {
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale));
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-dim);
@@ -154,14 +157,14 @@ input#left-path, input#right-path, input#left-ref, input#right-ref, input#filter
     color: var(--text);
     padding: 0 10px;
     border-radius: var(--radius);
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     outline: none;
     transition: border-color 0.12s, box-shadow 0.12s;
 }
 
 input#filter-input {
     height: var(--control-h-sm);
-    font-size: 12.5px;
+    font-size: calc(12.5px * var(--font-scale));
 }
 
 select.ref-select {
@@ -179,7 +182,7 @@ select.ref-select {
     padding: 0 28px 0 10px;
     border-radius: var(--radius);
     font-family: inherit;
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     outline: none;
     cursor: pointer;
     text-overflow: ellipsis;
@@ -224,7 +227,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .suggestion-item {
     padding: 7px 10px;
-    font-size: 12.5px;
+    font-size: calc(12.5px * var(--font-scale));
     color: var(--text-dim);
     cursor: pointer;
     white-space: nowrap;
@@ -248,7 +251,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border: 1px solid var(--border);
     color: var(--text);
     border-radius: var(--radius);
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     font-weight: 600;
     line-height: 1;
     white-space: nowrap;
@@ -320,7 +323,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .btn-small {
     height: var(--control-h-sm);
     padding: 0 10px;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
 }
 
 .btn-primary.btn-small {
@@ -330,7 +333,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .btn-icon {
     width: var(--control-h);
     padding: 0;
-    font-size: 15px;
+    font-size: calc(15px * var(--font-scale));
     color: var(--text-dim);
 }
 
@@ -385,7 +388,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     padding: 8px 10px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 12.5px;
+    font-size: calc(12.5px * var(--font-scale));
     color: var(--text-dim);
     margin-bottom: 2px;
 }
@@ -415,7 +418,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .file-row .badge {
     flex-shrink: 0;
-    font-size: 9.5px;
+    font-size: calc(9.5px * var(--font-scale));
     font-weight: 800;
     letter-spacing: 0.04em;
     padding: 2px 5px;
@@ -450,7 +453,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     gap: 12px;
     flex-wrap: wrap;
     padding: 8px 16px;
-    font-size: 12.5px;
+    font-size: calc(12.5px * var(--font-scale));
     border-bottom: 1px solid var(--border);
 }
 
@@ -463,7 +466,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .empty-state {
     color: var(--text-faint);
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     padding: 20px 16px;
     line-height: 1.5;
 }
@@ -494,7 +497,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     flex: 1 1 300px;
     min-width: 0;
     font-weight: 800;
-    font-size: 14px;
+    font-size: calc(14px * var(--font-scale));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -503,14 +506,14 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .content-title .path-sub {
     color: var(--text-faint);
     font-weight: 400;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     margin-left: 8px;
 }
 
 .content-stats {
     display: flex;
     gap: 10px;
-    font-size: 11.5px;
+    font-size: calc(11.5px * var(--font-scale));
     color: var(--text-dim);
     flex-shrink: 0;
 }
@@ -570,7 +573,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border-radius: 5px;
     color: var(--text-dim);
     padding: 0 10px;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     font-weight: 600;
     white-space: nowrap;
     outline: none;
@@ -601,7 +604,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     flex: 1;
     overflow: auto;
     min-height: 0;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-family: var(--font-diff, var(--font-diff-default));
     font-size: var(--diff-font-size, 12.5px); /* diff_font_size in the config file */
 }
 
@@ -716,7 +719,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     flex-wrap: wrap;
     background: var(--bg-panel);
     /* Not the diff's text, so diff_font_size doesn't resize it */
-    font-size: 12.5px;
+    font-size: calc(12.5px * var(--font-scale));
     /* Stays in view while the lines scroll beneath it */
     position: sticky;
     top: 0;
@@ -753,7 +756,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .paths-slim-label {
     flex: 1;
     min-width: 0;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     color: var(--text-dim);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -766,7 +769,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     height: var(--control-h-sm);
     padding: 0;
     border-radius: 50%;
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     font-weight: 700;
 }
 
@@ -794,7 +797,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     border: none;
     border-right: 1px solid var(--border);
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale));
 }
 
 .files-rail:hover {
@@ -809,7 +812,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .file-pos {
     padding: 0 4px;
-    font-size: 11.5px;
+    font-size: calc(11.5px * var(--font-scale));
     color: var(--text-dim);
     white-space: nowrap;
 }
@@ -890,7 +893,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 }
 
 .merge-toolbar .stats {
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     color: var(--text-dim);
     display: flex;
     gap: 14px;
@@ -908,7 +911,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 }
 
 .save-state {
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     font-weight: 700;
 }
 
@@ -978,7 +981,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     color: var(--text-dim);
     cursor: pointer;
     padding: 0 2px;
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale));
     line-height: 18px;
 }
 
@@ -1017,7 +1020,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .conflict-card-head .spacer { flex: 1; }
 .conflict-title { font-weight: 700; color: var(--text); }
-.conflict-line { color: var(--text-faint); font-size: 11.5px; margin-right: 4px; }
+.conflict-line { color: var(--text-faint); font-size: calc(11.5px * var(--font-scale)); margin-right: 4px; }
 .badge-resolved { background: rgba(52, 211, 153, 0.16); color: var(--green); }
 
 .conflict-sides {
@@ -1034,7 +1037,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .conflict-side-label {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale));
     font-weight: 700;
     color: var(--text-dim);
     background: var(--bg-elevated);
@@ -1059,7 +1062,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .conflict-base summary {
     cursor: pointer;
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale));
     color: var(--text-dim);
 }
 
@@ -1079,7 +1082,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     padding: 6px 16px;
     background: var(--bg-panel);
     border-top: 1px solid var(--border);
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     color: var(--text-dim);
     min-height: 26px;
     display: flex;
@@ -1135,12 +1138,12 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .modal-header h2 {
     margin: 0;
-    font-size: 15px;
+    font-size: calc(15px * var(--font-scale));
 }
 
 .help-version {
     margin-left: 6px;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     font-weight: normal;
     color: var(--text-dim);
 }
@@ -1180,7 +1183,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     gap: 10px;
     padding: 8px 10px;
     border-radius: 6px;
-    font-size: 12.5px;
+    font-size: calc(12.5px * var(--font-scale));
 }
 
 .copy-row:hover {
@@ -1202,7 +1205,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     height: var(--control-h-sm);
     padding: 0;
     border-radius: 50%;
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     font-weight: 700;
 }
 
@@ -1227,7 +1230,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .help-section h3 {
     margin: 18px 0 8px;
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale));
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: #c6b5ff;
@@ -1235,7 +1238,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .help-section p {
     margin: 0;
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
     line-height: 1.55;
     color: var(--text-dim);
 }
@@ -1249,7 +1252,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     grid-template-columns: max-content 1fr;
     gap: 7px 18px;
     margin: 0;
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale));
 }
 
 .help-keys-spaced {
@@ -1271,7 +1274,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
     min-width: 20px;
     padding: 1px 6px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11.5px;
+    font-size: calc(11.5px * var(--font-scale));
     text-align: center;
     color: var(--text);
     background: var(--bg-elevated-2);
@@ -1283,7 +1286,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 .help-modal .help-ui {
     display: inline-block;
     padding: 0 6px;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     border-radius: 4px;
     background: var(--accent-soft);
     color: #c6b5ff;
@@ -1291,7 +1294,7 @@ input#left-path:focus, input#right-path:focus, input#left-ref:focus, input#right
 
 .help-modal code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale));
     color: var(--text);
 }
 
