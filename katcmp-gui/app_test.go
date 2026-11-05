@@ -309,12 +309,21 @@ func TestCheckTargetOnDisk(t *testing.T) {
 		}
 	}
 
+	if _, err := a.CheckTargetOnDisk("f.txt", "left"); err == nil {
+		t.Error("a file that isn't open has nothing to compare with")
+	}
+	if _, err := a.GetDiff("f.txt"); err != nil {
+		t.Fatal(err)
+	}
 	check("unchanged")
 
 	if _, err := a.SaveMerge(selectAll(t, a, "f.txt", "left")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.LoadComparison(a.leftPath, a.rightPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GetDiff("f.txt"); err != nil {
 		t.Fatal(err)
 	}
 	check("unchanged")
@@ -410,5 +419,127 @@ func TestConfigSettingsInTheApp(t *testing.T) {
 	s = a.GetSettings()
 	if s.ConfigError == "" || s.DiffFontSize != 12.5 {
 		t.Errorf("bad value: %+v", s)
+	}
+}
+
+func TestOnDemandLoading(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	write := func(dir, name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(left, "f.txt", "old\n")
+	write(right, "f.txt", "new\n")
+	write(left, "g.txt", "g1\n")
+	write(right, "g.txt", "g2\n")
+
+	a := NewApp(nil)
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+
+	// Edited after loading, before opening: shows the new text.
+	write(left, "f.txt", "edited\n")
+	diff, err := a.GetDiff("f.txt")
+	if err != nil || diff.Lines[0].Content != "edited" {
+		t.Fatalf("diff = %+v, %v", diff, err)
+	}
+
+	// Edited while open: the disk check notices.
+	write(left, "f.txt", "edited again\n")
+	if got, _ := a.CheckTargetOnDisk("f.txt", "left"); got != "changed" {
+		t.Errorf("disk check = %q", got)
+	}
+
+	// A save uses the diff on screen, whatever's on disk now.
+	req := MergeSaveRequest{RelPath: "f.txt", Target: "left", SelectedInsertions: []int{1}, SelectedDeletions: []int{0}, Token: diff.Token}
+	if _, err := a.SaveMerge(req); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(left, "f.txt")); string(got) != "new\n" {
+		t.Errorf("saved %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(left, "f.txt.orig")); string(got) != "edited again\n" {
+		t.Errorf("backup = %q", got)
+	}
+
+	// A save for a file that isn't open is refused, rather than guessing at lines.
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GetDiff("g.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SaveMerge(req); err == nil || !strings.Contains(err.Error(), "nothing was saved") {
+		t.Errorf("save of a file that isn't open: %v", err)
+	}
+
+	// Going back to a file reads it afresh. A save from the earlier reading is
+	// refused, because its line numbers may no longer match.
+	first, err := a.GetDiff("f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(left, "f.txt", "different\nagain\n")
+	if second, err := a.GetDiff("f.txt"); err != nil || second.Lines[0].Content != "different" {
+		t.Fatalf("going back: %+v, %v", second, err)
+	}
+	stale := MergeSaveRequest{RelPath: "f.txt", Target: "left", SelectedInsertions: []int{1}, SelectedDeletions: []int{0}, Token: first.Token}
+	if _, err := a.SaveMerge(stale); err == nil || !strings.Contains(err.Error(), "nothing was saved") {
+		t.Errorf("save from an older reading: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(left, "f.txt")); string(got) != "different\nagain\n" {
+		t.Errorf("the refused save changed the file: %q", got)
+	}
+
+	// Side-by-side rows come separately, for the open file only.
+	if rows, err := a.GetSideBySide("g.txt"); err != nil || len(rows) != 1 || rows[0].LeftContent != "g1" || rows[0].RightContent != "g2" {
+		t.Errorf("rows = %+v, %v", rows, err)
+	}
+	if _, err := a.GetSideBySide("never-opened.txt"); err == nil {
+		t.Error("rows for a file that isn't open should be an error")
+	}
+
+	// Deleted after loading: says so.
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(left, "g.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GetDiff("g.txt"); err == nil || !strings.Contains(err.Error(), "may have changed") {
+		t.Errorf("deleted file: %v", err)
+	}
+}
+
+// The page checks the disk in the background, so a check for the previous file
+// can arrive after another was opened. It mustn't take over as the open file, or
+// saving the file on screen would be refused.
+func TestLateDiskCheckDoesNotChangeTheOpenFile(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	for name, sides := range map[string][2]string{"a.txt": {"a1\n", "a2\n"}, "b.txt": {"b1\n", "b2\n"}} {
+		if err := os.WriteFile(filepath.Join(left, name), []byte(sides[0]), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(right, name), []byte(sides[1]), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := NewApp(nil)
+	if _, err := a.LoadComparison(left, right); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.GetDiff("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	req := selectAll(t, a, "b.txt", "left") // b.txt is now open
+	a.CheckTargetOnDisk("a.txt", "left")    // the late check for a.txt
+	if _, err := a.SaveMerge(req); err != nil {
+		t.Errorf("saving the file on screen was refused: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(left, "b.txt")); string(got) != "b2\n" {
+		t.Errorf("b.txt = %q", got)
 	}
 }

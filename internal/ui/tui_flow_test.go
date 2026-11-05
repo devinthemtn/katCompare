@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -959,5 +960,119 @@ func TestConfigProblemIsShown(t *testing.T) {
 	press(t, m, "j")
 	if strings.Contains(m.View(), "Using default settings") {
 		t.Errorf("warning should clear once fixed:\n%s", m.View())
+	}
+}
+
+func TestFileEditedAfterLoadingShowsItsNewText(t *testing.T) {
+	// Narrow, so that a file isn't read until it's opened.
+	m, left, _ := compareDirs(t, map[string]string{"f.txt": "old\n"}, map[string]string{"f.txt": "new\n"})
+	m.windowWidth = 80
+	m.currentDiff, m.diffFile, m.diffCache, m.diffOrder = nil, "", nil, nil
+	writeTree(t, left, map[string]string{"f.txt": "edited after loading\n"})
+	press(t, m, "enter")
+	if !strings.Contains(m.View(), "edited after loading") {
+		t.Errorf("should show the file as it is now:\n%s", m.View())
+	}
+}
+
+func TestOpenFileKeepsItsTextThroughOutsideEdits(t *testing.T) {
+	m, left, _ := compareDirs(t, map[string]string{"f.txt": "old\n"}, map[string]string{"f.txt": "new\n"})
+	m.selectedFile = "f.txt"
+	press(t, m, "enter", "m")
+	writeTree(t, left, map[string]string{"f.txt": "edited while open\n"})
+	press(t, m, "j")
+	if !strings.Contains(m.View(), "old") {
+		t.Errorf("the open view should keep what it showed:\n%s", m.View())
+	}
+	press(t, m, "s")
+	if !strings.Contains(m.View(), "Changed on disk") {
+		t.Errorf("no warning about the edit:\n%s", m.View())
+	}
+	if got := readFile(t, filepath.Join(left, "f.txt")); got != "edited while open\n" {
+		t.Errorf("first s overwrote the edit: %q", got)
+	}
+}
+
+func TestFileDeletedAfterLoadingSaysSo(t *testing.T) {
+	m, left, _ := compareDirs(t,
+		map[string]string{"a.txt": "a\n", "f.txt": "old\n"},
+		map[string]string{"a.txt": "b\n", "f.txt": "new\n"})
+	if err := os.Remove(filepath.Join(left, "f.txt")); err != nil {
+		t.Fatal(err)
+	}
+	m.selectedFile = "f.txt"
+	press(t, m, "enter")
+	if !strings.Contains(m.View(), "Couldn't read this file") {
+		t.Errorf("no error shown:\n%s", m.View())
+	}
+	press(t, m, "m", "s", "j", "esc") // nothing here should crash
+	press(t, m, "r")
+	if m.allFiles["f.txt"] == nil || m.allFiles["f.txt"].LeftFile != nil {
+		t.Errorf("reload should show the file as right-only: %+v", m.allFiles["f.txt"])
+	}
+}
+
+func TestReloadWhenMergeTargetBecomesUnreadable(t *testing.T) {
+	m, left, right := compareDirs(t, map[string]string{"f.txt": "old\n"}, map[string]string{"f.txt": "new\n"})
+	m.selectedFile = "f.txt"
+	press(t, m, "enter", "m")
+	os.Remove(filepath.Join(left, "f.txt"))
+	os.Remove(filepath.Join(right, "f.txt"))
+	press(t, m, "r") // must not crash
+	if m.viewMode == ViewModeMerge {
+		t.Errorf("merge view stayed open with no file: %v", m.viewMode)
+	}
+	_ = m.View()
+}
+
+func TestDiffCacheStaysWithinItsLimit(t *testing.T) {
+	old := maxCachedBytes
+	maxCachedBytes = 1000
+	defer func() { maxCachedBytes = old }()
+
+	big := strings.Repeat("x\n", 300) // 600 bytes a side, so a pair is over the limit
+	left, right := map[string]string{}, map[string]string{}
+	for i := 0; i < 6; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		left[name], right[name] = big+"l\n", big+"r\n"
+	}
+	m, leftDir, _ := compareDirs(t, left, right)
+	for i := 0; i < 6; i++ {
+		press(t, m, "j")
+		total := 0
+		for _, c := range m.diffCache {
+			total += len(c.left) + len(c.right)
+		}
+		if total > maxCachedBytes {
+			t.Fatalf("cache holds %d bytes, limit %d", total, maxCachedBytes)
+		}
+		if m.currentDiff == nil || m.diffFile != m.selectedFile {
+			t.Fatalf("the open file has no diff: %q vs %q", m.diffFile, m.selectedFile)
+		}
+	}
+
+	// The open file was dropped from the cache, but a merge still saves what's shown.
+	if len(m.diffCache) != 0 {
+		t.Fatalf("expected an empty cache, have %d", len(m.diffCache))
+	}
+	name := m.selectedFile
+	press(t, m, "enter", "m", "s")
+	if got := readFile(t, filepath.Join(leftDir, name)); got != big+"r\n" {
+		t.Errorf("saved %d bytes, err %q", len(got), m.errorMsg)
+	}
+}
+
+func TestGoingBackToAnEditedFileShowsItsNewText(t *testing.T) {
+	m, left, _ := compareDirs(t,
+		map[string]string{"a.txt": "a1\n", "b.txt": "b1\n"},
+		map[string]string{"a.txt": "a2\n", "b.txt": "b2\n"})
+	press(t, m, "j") // on to b.txt, with a.txt now in the cache
+	if m.selectedFile != "b.txt" {
+		t.Fatalf("selected %q", m.selectedFile)
+	}
+	writeTree(t, left, map[string]string{"a.txt": "edited while away, a different size\n"})
+	press(t, m, "k")
+	if !strings.Contains(m.View(), "edited while away") {
+		t.Errorf("should show the file as it is now:\n%s", m.View())
 	}
 }

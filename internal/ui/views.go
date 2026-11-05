@@ -259,6 +259,12 @@ func (m *Model) renderDiffPane(w int) (string, []string) {
 		return "Diff", []string{helpStyle.Render(" Select a file to see its differences")}
 	}
 	name := sanitizeLine(m.displayNameForFile(m.selectedFile))
+	if m.diffErr != nil && m.diffFile == m.selectedFile {
+		return name, []string{
+			errorStyle.Render(truncate(" Couldn't read this file: "+sanitizeLine(m.diffErr.Error()), w)),
+			helpStyle.Render(" It may have changed since it was loaded. Press r to reload."),
+		}
+	}
 	if m.currentDiff == nil || m.diffFile != m.selectedFile {
 		return name, []string{helpStyle.Render(" Loading…")}
 	}

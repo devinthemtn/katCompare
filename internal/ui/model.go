@@ -68,16 +68,20 @@ type Model struct {
 	rightPath      string
 	leftFile       *file.FileInfo
 	rightFile      *file.FileInfo
-	commonFiles    map[string][2]*file.FileInfo
 	allFiles       map[string]*file.FileComparison
 	selectedFile   string
 	fileListScroll int
+	sorted         []string
+	sortedFor      sortedKey
 
 	// Diff view
 	diffFile      string // the file currentDiff belongs to
 	diffCache     map[string]*cachedDiff
-	diffGen       int // counts comparison loads; older background results are dropped
-	previewSeq    int // identifies the latest delayed diff load
+	diffOrder     []string    // the cache's files, oldest first
+	openDiff      *cachedDiff // the file on screen
+	diffErr       error       // why the selected file couldn't be read
+	diffGen       int         // counts comparison loads; older background results are dropped
+	previewSeq    int         // identifies the latest delayed diff load
 	currentDiff   *differ.FileDiff
 	sbsRows       []differ.SideBySideRow // precomputed side-by-side rows (cached from currentDiff)
 	scrollOffset  int
@@ -161,6 +165,14 @@ type externalDoneMsg struct {
 	err  error
 }
 
+// sortedKey says what a kept list of sorted files was made from. diffGen changes
+// on every load, and the count catches rows pruned afterwards.
+type sortedKey struct {
+	query string
+	count int
+	gen   int
+}
+
 // previewMsg loads the selected file's diff after a short delay, so moving
 // through a list of large files doesn't diff each one on the way past.
 type previewMsg struct{ seq int }
@@ -172,18 +184,61 @@ type diffReadyMsg struct {
 	cached  *cachedDiff
 }
 
-// previewDelay and previewNoDelayBytes control when a diff load waits. Up to
-// the limit a diff takes well under the time between key repeats; past it, it
-// can take seconds, so it runs in the background.
+// previewDelay and previewNoDelayBytes control when a diff load waits. Up to the
+// limit, reading and diffing a file takes well under the time between key
+// repeats. Past it, a slow disk could be noticeable, so it runs in the background.
 const (
 	previewDelay        = 80 * time.Millisecond
 	previewNoDelayBytes = 128 * 1024
 )
 
-// cachedDiff is a computed diff, kept until the next reload.
+// cachedDiff is a file's two sides and their diff. The file on screen stays in
+// openDiff, so the disk check and a save work from what's shown. Others are kept
+// up to maxCachedBytes, so moving back and forth through a list stays quick.
 type cachedDiff struct {
-	diff *differ.FileDiff
-	rows []differ.SideBySideRow
+	left, right string
+	diff        *differ.FileDiff
+	rows        []differ.SideBySideRow
+	err         error
+	stamp       string // which version of the files this is
+}
+
+// diffStamp identifies the versions of a comparison's files on disk.
+func diffStamp(comp *file.FileComparison) string {
+	var left, right string
+	if comp.LeftFile != nil {
+		left = comp.LeftFile.Stamp()
+	}
+	if comp.RightFile != nil {
+		right = comp.RightFile.Stamp()
+	}
+	return left + "|" + right
+}
+
+// maxCachedBytes limits the text held in the diff cache, on top of the open file.
+var maxCachedBytes = 64 << 20
+
+// cacheDiff keeps a diff, dropping the oldest ones past the limit.
+func (m *Model) cacheDiff(relPath string, cached *cachedDiff) {
+	if m.diffCache == nil {
+		m.diffCache = make(map[string]*cachedDiff)
+	}
+	if _, exists := m.diffCache[relPath]; !exists {
+		m.diffOrder = append(m.diffOrder, relPath)
+	}
+	m.diffCache[relPath] = cached
+	total := 0
+	for _, c := range m.diffCache {
+		total += len(c.left) + len(c.right)
+	}
+	for total > maxCachedBytes && len(m.diffOrder) > 0 {
+		oldest := m.diffOrder[0]
+		m.diffOrder = m.diffOrder[1:]
+		if c := m.diffCache[oldest]; c != nil {
+			total -= len(c.left) + len(c.right)
+			delete(m.diffCache, oldest)
+		}
+	}
 }
 
 // Version is the build version shown in the help screen; set by main.
@@ -291,7 +346,6 @@ func New() *Model {
 		merger:         merge.New(),
 		tracker:        merge.NewTracker(),
 		focus:          focusInputLeft,
-		commonFiles:    make(map[string][2]*file.FileInfo),
 		allFiles:       make(map[string]*file.FileComparison),
 		leftSuggIndex:  -1,
 		rightSuggIndex: -1,
@@ -379,10 +433,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.diffGen {
 			return m, nil
 		}
-		if m.diffCache == nil {
-			m.diffCache = make(map[string]*cachedDiff)
-		}
-		m.diffCache[msg.relPath] = msg.cached
+		m.cacheDiff(msg.relPath, msg.cached)
 		if msg.relPath == m.selectedFile && m.browsing() {
 			m.ensureDiffLoaded()
 		}
@@ -1150,26 +1201,29 @@ func (m *Model) pruneMergeBackups() {
 		}
 		if merge.AllBackups(paths, backups) {
 			delete(m.allFiles, relPath)
-			delete(m.commonFiles, relPath)
 		}
 	}
 }
 
-// refreshStatuses works out each file's merge status and the list's summary.
+// refreshStatuses works out each file's merge status.
 func (m *Model) refreshStatuses() {
 	m.statuses = make(map[string]*merge.Record)
-	m.identical = make(map[string]bool)
-	m.differCount = 0
 	for relPath, comp := range m.allFiles {
 		if rec := m.tracker.StatusOf(m.editablePathOf(comp, "left"), m.editablePathOf(comp, "right")); rec != nil {
 			m.statuses[relPath] = rec
 		}
-		if comp.Source == file.SourceBoth && m.diffOpts.Same(comp.LeftFile.Content, comp.RightFile.Content) {
-			m.identical[relPath] = true
-		} else {
-			m.differCount++
-		}
 	}
+}
+
+// refreshIdentical works out which files have no differences to show, and the
+// list's summary. It compares every file, so it's only for when they're loaded.
+func (m *Model) refreshIdentical() {
+	var same func(string, string) bool
+	if m.diffOpts.Describe() != "" {
+		same = m.diffOpts.Same
+	}
+	m.identical = file.Identical(m.allFiles, same)
+	m.differCount = len(m.allFiles) - len(m.identical)
 }
 
 // pruneIdentical applies hide_identical. Comparing two single files always shows
@@ -1182,7 +1236,6 @@ func (m *Model) pruneIdentical() {
 	for relPath := range m.identical {
 		if m.statuses[relPath] == nil && !m.conflicts[relPath] {
 			delete(m.allFiles, relPath)
-			delete(m.commonFiles, relPath)
 			m.hiddenIdentical++
 		}
 	}
@@ -1198,9 +1251,12 @@ func (m *Model) refreshTargetDisk() {
 	if path == "" {
 		return
 	}
-	loaded := comp.RightFile.Content
+	if m.openDiff == nil || m.diffFile != m.selectedFile {
+		return
+	}
+	loaded := m.openDiff.right
 	if m.mergeTarget == "left" {
-		loaded = comp.LeftFile.Content
+		loaded = m.openDiff.left
 	}
 	if state, err := merge.DiskState(path, loaded); err == nil {
 		m.targetDisk = state
@@ -1379,7 +1435,7 @@ func (m *Model) reloadComparison() {
 		m.cursor, m.scrollOffset, m.hScrollOffset = cursor, min(scroll, cursor), hScroll
 	}
 	if m.viewMode == ViewModeMerge {
-		if comp := m.allFiles[m.selectedFile]; comp.Source != file.SourceBoth || m.selectedFile != selected {
+		if comp := m.allFiles[m.selectedFile]; comp.Source != file.SourceBoth || m.selectedFile != selected || m.currentDiff == nil {
 			m.viewMode = ViewModeDiff
 			m.errorMsg = "The file is no longer on both sides, so the merge has ended"
 			return
@@ -1609,12 +1665,12 @@ func (m *Model) updateCommonFiles() {
 	if m.leftFile != nil && m.rightFile != nil {
 		m.gitMode = false
 		m.conflicts = nil
-		m.diffCache = nil
+		m.diffCache, m.diffOrder = nil, nil
 		m.diffGen++
-		m.commonFiles = file.FindCommonFiles(m.leftFile, m.rightFile)
 		m.allFiles = file.FindAllFiles(m.leftFile, m.rightFile)
 		m.pruneMergeBackups()
 		m.refreshStatuses()
+		m.refreshIdentical()
 		m.pruneIdentical()
 		m.fileListScroll = 0 // Reset scroll when files change
 		m.syncSelectionToFilter()
@@ -1649,7 +1705,14 @@ func (m *Model) displayNameForFile(relPath string) string {
 
 // getSortedFiles returns the files the list shows, in order: those matching
 // the filter, if there is one.
+//
+// It's called several times per frame, so the result is kept until the files or
+// the filter change. Callers mustn't change the slice.
 func (m *Model) getSortedFiles() []string {
+	key := sortedKey{m.filterQuery, len(m.allFiles), m.diffGen}
+	if m.sorted != nil && m.sortedFor == key {
+		return m.sorted
+	}
 	query := strings.ToLower(m.filterQuery)
 	files := make([]string, 0, len(m.allFiles))
 	for relPath := range m.allFiles {
@@ -1658,6 +1721,7 @@ func (m *Model) getSortedFiles() []string {
 		}
 	}
 	sort.Strings(files)
+	m.sorted, m.sortedFor = files, key
 	return files
 }
 
@@ -1741,7 +1805,6 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 	m.rightFile = &file.FileInfo{Path: m.rightPath, Name: rightLabel, IsDir: true}
 
 	m.allFiles = make(map[string]*file.FileComparison)
-	m.commonFiles = make(map[string][2]*file.FileInfo)
 	m.selectedFile = ""
 
 	m.gitMode = true
@@ -1817,34 +1880,41 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 			comparison.LeftFile = lf
 			comparison.RightFile = rf
 			comparison.Source = file.SourceBoth
-			m.commonFiles[fs.Path] = [2]*file.FileInfo{lf, rf}
 		}
 
 		m.allFiles[fs.Path] = comparison
 	}
 
-	m.diffCache = nil
+	m.diffCache, m.diffOrder = nil, nil
 	m.diffGen++
 	m.pruneMergeBackups()
 	m.refreshStatuses()
+	m.refreshIdentical()
 	m.pruneIdentical()
 	m.syncSelectionToFilter()
 
 	return nil
 }
 
-// computeDiff diffs one file's two sides.
+// computeDiff reads one file's two sides and diffs them.
 func computeDiff(d *differ.Differ, comp *file.FileComparison) *cachedDiff {
-	var leftContent, rightContent string
+	cached := &cachedDiff{stamp: diffStamp(comp)}
 	leftPath, rightPath := "<file not found>", "<file not found>"
 	if comp.LeftFile != nil {
-		leftContent, leftPath = comp.LeftFile.Content, comp.LeftFile.Path
+		leftPath = comp.LeftFile.Path
+		if cached.left, cached.err = comp.LeftFile.Text(); cached.err != nil {
+			return cached
+		}
 	}
 	if comp.RightFile != nil {
-		rightContent, rightPath = comp.RightFile.Content, comp.RightFile.Path
+		rightPath = comp.RightFile.Path
+		if cached.right, cached.err = comp.RightFile.Text(); cached.err != nil {
+			return cached
+		}
 	}
-	diff := d.CompareStrings(leftPath, rightPath, leftContent, rightContent)
-	return &cachedDiff{diff: diff, rows: differ.BuildSideBySideRows(diff.Lines)}
+	cached.diff = d.CompareStrings(leftPath, rightPath, cached.left, cached.right)
+	cached.rows = differ.BuildSideBySideRows(cached.diff.Lines)
+	return cached
 }
 
 // computeDiffCmd diffs a file in the background.
@@ -1876,18 +1946,24 @@ func (m *Model) loadDiff() {
 		return
 	}
 
+	// A kept diff is only good if its files haven't changed since.
 	cached, ok := m.diffCache[m.selectedFile]
-	if !ok {
+	if !ok || cached.stamp != diffStamp(fileComparison) {
 		cached = computeDiff(m.differ, fileComparison)
-		if m.diffCache == nil {
-			m.diffCache = make(map[string]*cachedDiff)
+		if cached.err == nil {
+			m.cacheDiff(m.selectedFile, cached)
 		}
-		m.diffCache[m.selectedFile] = cached
 	}
 
+	m.openDiff = cached
+	m.diffErr = cached.err
+	m.diffFile = m.selectedFile
+	if cached.err != nil {
+		m.currentDiff, m.sbsRows = nil, nil
+		return
+	}
 	m.currentDiff = cached.diff
 	m.sbsRows = cached.rows
-	m.diffFile = m.selectedFile
 	m.hScrollOffset = 0
 	m.moveToFirstChange()
 }
@@ -2205,7 +2281,7 @@ func (m *Model) saveMergedFile() tea.Cmd {
 		result = m.merger.ApplyToRight(m.currentDiff, m.changeSelection)
 	}
 	return func() tea.Msg {
-		report, err := merge.SaveVerified(targetPath, result.Content)
+		report, err := merge.SaveMerged(targetPath, result)
 		if err != nil {
 			return saveDoneMsg{err: fmt.Errorf("error saving merged file: %w", err)}
 		}
@@ -2237,15 +2313,7 @@ func (m *Model) getUniqueFiles() []string {
 		}
 	}
 
-	// Sort files alphabetically
-	for i := 0; i < len(uniqueFiles)-1; i++ {
-		for j := i + 1; j < len(uniqueFiles); j++ {
-			if uniqueFiles[i] > uniqueFiles[j] {
-				uniqueFiles[i], uniqueFiles[j] = uniqueFiles[j], uniqueFiles[i]
-			}
-		}
-	}
-
+	sort.Strings(uniqueFiles)
 	return uniqueFiles
 }
 
@@ -2299,7 +2367,10 @@ type copyDoneMsg struct {
 
 // executeCopyOperation copies the ticked files going in the current direction.
 func (m *Model) executeCopyOperation() tea.Cmd {
-	type copyJob struct{ rel, dst, content string }
+	type copyJob struct {
+		rel, dst string
+		src      *file.FileInfo
+	}
 	var jobs []copyJob
 	skipped := 0
 	for _, relPath := range m.getUniqueFiles() {
@@ -2309,9 +2380,9 @@ func (m *Model) executeCopyOperation() tea.Cmd {
 		}
 		comp := m.allFiles[relPath]
 		if m.copyTarget == "to-right" {
-			jobs = append(jobs, copyJob{relPath, filepath.Join(m.rightFile.Path, relPath), comp.LeftFile.Content})
+			jobs = append(jobs, copyJob{relPath, filepath.Join(m.rightFile.Path, relPath), comp.LeftFile})
 		} else {
-			jobs = append(jobs, copyJob{relPath, filepath.Join(m.leftFile.Path, relPath), comp.RightFile.Content})
+			jobs = append(jobs, copyJob{relPath, filepath.Join(m.leftFile.Path, relPath), comp.RightFile})
 		}
 	}
 	return func() tea.Msg {
@@ -2322,7 +2393,11 @@ func (m *Model) executeCopyOperation() tea.Cmd {
 				errs = append(errs, fmt.Sprintf("%s: %v", job.rel, err))
 				continue
 			}
-			if err := os.WriteFile(job.dst, []byte(job.content), 0644); err != nil {
+			text, err := job.src.Text()
+			if err == nil {
+				err = os.WriteFile(job.dst, []byte(text), 0644)
+			}
+			if err != nil {
 				errs = append(errs, fmt.Sprintf("%s: %v", job.rel, err))
 				continue
 			}

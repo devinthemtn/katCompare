@@ -20,6 +20,7 @@ type ChangeSelection struct {
 
 // MergeResult represents the result of merging changes
 type MergeResult struct {
+	Lines   int // how many lines Content holds; it has no final newline
 	Content string
 	Applied int
 	Skipped int
@@ -184,6 +185,7 @@ func (m *Merger) ApplyToRight(diff *differ.FileDiff, selection *ChangeSelection)
 func finishMerge(result *strings.Builder, applied, skipped int) *MergeResult {
 	return &MergeResult{
 		Content: strings.TrimSuffix(result.String(), "\n"),
+		Lines:   strings.Count(result.String(), "\n"),
 		Applied: applied,
 		Skipped: skipped,
 	}
@@ -332,11 +334,24 @@ func SaveWithBackup(path, content string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return writeWithBackup(path, old, withTrailingNewline(old, content))
+}
+
+// writeWithBackup writes old to path+".orig" and content to path, keeping the
+// file's permissions, and returns the backup path.
+func writeWithBackup(path string, old []byte, content string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory", path)
+	}
 	backup := path + ".orig"
 	if err := os.WriteFile(backup, old, info.Mode().Perm()); err != nil {
 		return "", fmt.Errorf("failed to write backup: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(withTrailingNewline(old, content)), info.Mode().Perm()); err != nil {
+	if err := os.WriteFile(path, []byte(content), info.Mode().Perm()); err != nil {
 		return "", fmt.Errorf("failed to save %s: %w", path, err)
 	}
 	return backup, nil
@@ -363,6 +378,35 @@ func withTrailingNewline(old []byte, content string) string {
 	return content
 }
 
+// mergedBytes returns the file a merge result makes, ending the way old did. The
+// result's Content lost its final newline but may end in blank lines, so whether
+// it ends in a newline says nothing: its line count is what's reliable.
+func mergedBytes(old []byte, r *MergeResult) string {
+	if r.Lines == 0 {
+		return ""
+	}
+	halfCRLF := strings.HasSuffix(r.Content, "\r")
+	switch {
+	case len(old) == 0 || (bytes.HasSuffix(old, []byte("\n")) && (halfCRLF || !bytes.HasSuffix(old, []byte("\r\n")))):
+		return r.Content + "\n"
+	case bytes.HasSuffix(old, []byte("\r\n")):
+		return r.Content + "\r\n"
+	case halfCRLF && !bytes.HasSuffix(old, []byte("\r")):
+		return strings.TrimSuffix(r.Content, "\r")
+	}
+	return r.Content
+}
+
+// SaveMerged saves a merge result over path, like SaveVerified.
+func SaveMerged(path string, r *MergeResult) (*SaveReport, error) {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	want := mergedBytes(old, r)
+	return saveChecked(path, old, want)
+}
+
 // SaveReport describes a finished save and what checking it found.
 type SaveReport struct {
 	Backup string   // path of the backup of the previous version
@@ -384,12 +428,18 @@ func SaveVerified(path, content string) (*SaveReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	backup, err := SaveWithBackup(path, content)
+	return saveChecked(path, old, withTrailingNewline(old, content))
+}
+
+// saveChecked writes content over path, keeping old as the backup, then checks
+// the result by reading it back.
+func saveChecked(path string, old []byte, content string) (*SaveReport, error) {
+	backup, err := writeWithBackup(path, old, content)
 	if err != nil {
 		return nil, err
 	}
 
-	want := []byte(withTrailingNewline(old, content))
+	want := []byte(content)
 	report := &SaveReport{Backup: backup, Hash: HashContent(want)}
 
 	saved, err := os.ReadFile(path)
