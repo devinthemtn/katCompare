@@ -54,6 +54,9 @@ type Tools struct {
 type GUI struct {
 	// AutoCollapsePaths collapses the paths bar after the user runs Compare.
 	AutoCollapsePaths bool    `toml:"auto_collapse_paths"`
+	FontFamily        string  `toml:"font_family"`      // the interface's; empty is the built-in one
+	FontSize          float64 `toml:"font_size"`        // the interface's
+	DiffFontFamily    string  `toml:"diff_font_family"` // the diff text's; empty is the built-in one
 	DiffFontSize      float64 `toml:"diff_font_size"`
 }
 
@@ -62,7 +65,7 @@ func Defaults() Config {
 	return Config{
 		Compare: Compare{IgnoreWhitespace: differ.WhitespaceNone},
 		View:    View{DefaultView: ViewUnified, DefaultMergeTarget: "left"},
-		GUI:     GUI{DiffFontSize: 12.5},
+		GUI:     GUI{FontSize: DefaultFontSize, DiffFontSize: 12.5},
 	}
 }
 
@@ -72,11 +75,27 @@ const (
 	ViewSideBySide = "sidebyside"
 )
 
-// The limits of diff_font_size.
+// DefaultFontSize is font_size's default. The interface's sizes are designed
+// around it, and a different font_size scales them all in proportion.
+const DefaultFontSize = 13
+
+// The limits of the font sizes.
 const (
 	minFontSize = 8
 	maxFontSize = 32
 )
+
+// checkFontFamily says what's wrong with a font family setting. Its value goes
+// into the page's styles, so anything beyond a font list is refused.
+func checkFontFamily(name, family string) error {
+	if strings.ContainsAny(family, ";{}()<>\\!@\n\r") {
+		return fmt.Errorf("%s should be font names, such as \"Fira Code\", not %q", name, family)
+	}
+	if strings.Count(family, "\"")%2 != 0 || strings.Count(family, "'")%2 != 0 {
+		return fmt.Errorf("%s has an unmatched quote: %q", name, family)
+	}
+	return nil
+}
 
 // validate says what's wrong with settings TOML itself can't check.
 func (c Config) validate() error {
@@ -91,8 +110,17 @@ func (c Config) validate() error {
 	if t := c.View.DefaultMergeTarget; t != "left" && t != "right" {
 		return fmt.Errorf("default_merge_target must be \"left\" or \"right\", not %q", t)
 	}
+	if s := c.GUI.FontSize; s < minFontSize || s > maxFontSize {
+		return fmt.Errorf("font_size must be from %d to %d, not %v", minFontSize, maxFontSize, s)
+	}
 	if s := c.GUI.DiffFontSize; s < minFontSize || s > maxFontSize {
 		return fmt.Errorf("diff_font_size must be from %d to %d, not %v", minFontSize, maxFontSize, s)
+	}
+	if err := checkFontFamily("font_family", c.GUI.FontFamily); err != nil {
+		return err
+	}
+	if err := checkFontFamily("diff_font_family", c.GUI.DiffFontFamily); err != nil {
+		return err
 	}
 	for _, pattern := range c.Compare.Ignore {
 		trimmed := strings.Trim(pattern, "/")
@@ -161,7 +189,15 @@ editor = ""
 # Collapse the paths bar after you run Compare.
 auto_collapse_paths = false
 
-# The size of the diff text, from 8 to 32.
+# The interface's font, and its size from 8 to 32. Empty means the built-in font.
+# Use the name of a font you have installed, or a list to try in order:
+# font_family = "Segoe UI"
+font_family = ""
+font_size = 13
+
+# The diff text's font and size. A monospaced font keeps columns lined up.
+# diff_font_family = "Cascadia Code, Consolas"
+diff_font_family = ""
 diff_font_size = 12.5
 `
 

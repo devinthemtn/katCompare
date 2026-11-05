@@ -239,6 +239,9 @@ default_merge_target = "right"
 editor = '"C:\Program Files\x\x.exe" -n'
 [gui]
 auto_collapse_paths = true
+font_family = "Segoe UI"
+font_size = 15
+diff_font_family = '"Fira Code", Consolas, monospace'
 diff_font_size = 14
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -252,7 +255,7 @@ diff_font_size = 14
 		Compare: Compare{Ignore: []string{"node_modules", "*.log", "docs/generated/"}, ShowHidden: true, HideIdentical: true, IgnoreLineEndings: true, IgnoreWhitespace: "trailing"},
 		View:    View{DefaultView: "sidebyside", DefaultMergeTarget: "right"},
 		Tools:   Tools{Editor: `"C:\Program Files\x\x.exe" -n`},
-		GUI:     GUI{AutoCollapsePaths: true, DiffFontSize: 14},
+		GUI:     GUI{AutoCollapsePaths: true, FontFamily: "Segoe UI", FontSize: 15, DiffFontFamily: `"Fira Code", Consolas, monospace`, DiffFontSize: 14},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v\nwant %+v", cfg, want)
@@ -267,16 +270,24 @@ diff_font_size = 14
 
 func TestInvalidValuesGiveDefaultsAndSaySo(t *testing.T) {
 	cases := map[string]struct{ content, mention string }{
-		"whitespace":   {"[compare]\nignore_whitespace = \"some\"\n", "ignore_whitespace"},
-		"empty value":  {"[compare]\nignore_whitespace = \"\"\n", "ignore_whitespace"},
-		"view":         {"[view]\ndefault_view = \"merge\"\n", "default_view"},
-		"target":       {"[view]\ndefault_merge_target = \"up\"\n", "default_merge_target"},
-		"font small":   {"[gui]\ndiff_font_size = 2\n", "diff_font_size"},
-		"font large":   {"[gui]\ndiff_font_size = 100\n", "diff_font_size"},
-		"bad wildcard": {"[compare]\nignore = [\"[a\"]\n", "ignore"},
-		"empty ignore": {"[compare]\nignore = [\"\"]\n", "ignore"},
-		"only slash":   {"[compare]\nignore = [\"/\"]\n", "ignore"},
-		"wrong type":   {"[compare]\nignore = \"node_modules\"\n", "ignore"},
+		"whitespace":    {"[compare]\nignore_whitespace = \"some\"\n", "ignore_whitespace"},
+		"empty value":   {"[compare]\nignore_whitespace = \"\"\n", "ignore_whitespace"},
+		"view":          {"[view]\ndefault_view = \"merge\"\n", "default_view"},
+		"target":        {"[view]\ndefault_merge_target = \"up\"\n", "default_merge_target"},
+		"font small":    {"[gui]\ndiff_font_size = 2\n", "diff_font_size"},
+		"ui font small": {"[gui]\nfont_size = 2\n", "font_size"},
+		"ui font large": {"[gui]\nfont_size = 100\n", "font_size"},
+		"ui font type":  {"[gui]\nfont_size = \"big\"\n", "font_size"},
+		"style escape":  {"[gui]\nfont_family = \"x; color: red\"\n", "font_family"},
+		"css function":  {"[gui]\ndiff_font_family = \"url(http://x)\"\n", "diff_font_family"},
+		"html":          {"[gui]\nfont_family = \"</style>\"\n", "font_family"},
+		"open quote":    {"[gui]\nfont_family = '\"Fira Code'\n", "font_family"},
+		"family type":   {"[gui]\nfont_family = 12\n", "font_family"},
+		"font large":    {"[gui]\ndiff_font_size = 100\n", "diff_font_size"},
+		"bad wildcard":  {"[compare]\nignore = [\"[a\"]\n", "ignore"},
+		"empty ignore":  {"[compare]\nignore = [\"\"]\n", "ignore"},
+		"only slash":    {"[compare]\nignore = [\"/\"]\n", "ignore"},
+		"wrong type":    {"[compare]\nignore = \"node_modules\"\n", "ignore"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -324,5 +335,28 @@ func TestTemplateExamplesAreValid(t *testing.T) {
 	}
 	if want := `"C:\Program Files\Notepad++\notepad++.exe" -n`; cfg.Tools.Editor != want {
 		t.Errorf("editor = %q, want %q", cfg.Tools.Editor, want)
+	}
+}
+
+func TestTemplateFontExamplesAreValid(t *testing.T) {
+	var uncommented []string
+	for _, line := range strings.Split(template, "\n") {
+		if strings.HasPrefix(line, "# font_family = ") || strings.HasPrefix(line, "# diff_font_family = ") {
+			line = strings.TrimPrefix(line, "# ")
+		} else if strings.HasPrefix(line, "font_family = ") || strings.HasPrefix(line, "diff_font_family = ") {
+			continue
+		}
+		uncommented = append(uncommented, line)
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(strings.Join(uncommented, "\n")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GUI.FontFamily == "" || cfg.GUI.DiffFontFamily == "" {
+		t.Errorf("examples didn't load: %+v", cfg.GUI)
 	}
 }

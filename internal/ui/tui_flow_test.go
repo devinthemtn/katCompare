@@ -1076,3 +1076,51 @@ func TestGoingBackToAnEditedFileShowsItsNewText(t *testing.T) {
 		t.Errorf("should show the file as it is now:\n%s", m.View())
 	}
 }
+
+// Terminals that pass Ctrl+- along send it as Ctrl+_. Font size is the terminal's
+// business, so it mustn't do anything here, including while typing a path.
+func TestCtrlMinusDoesNothing(t *testing.T) {
+	m, _, _ := compareDirs(t, map[string]string{"f.txt": "a\n"}, map[string]string{"f.txt": "b\n"})
+	key := tea.KeyMsg{Type: tea.KeyCtrlUnderscore}
+	for _, view := range []string{"o", "esc", "enter", "m"} {
+		before := m.viewMode
+		_, cmd := m.Update(key)
+		if cmd != nil || m.viewMode != before || m.errorMsg != "" {
+			t.Errorf("view %v: cmd=%v view=%v err=%q", before, cmd != nil, m.viewMode, m.errorMsg)
+		}
+		press(t, m, view)
+	}
+	m = New()
+	m.inputLeft = "typed"
+	m.Update(key)
+	if m.inputLeft != "typed" {
+		t.Errorf("input = %q", m.inputLeft)
+	}
+}
+
+// A terminal's zoom reaches the app as a change of size, in the middle of anything.
+func TestZoomingTheTerminalKeepsThePosition(t *testing.T) {
+	m, _, _ := browseDirs(t, 120, 34)
+	m.selectedFile = "long.txt"
+	press(t, m, "enter", "m")
+	cursor := m.cursor
+	for _, size := range [][2]int{{150, 42}, {90, 28}, {60, 18}, {200, 60}, {120, 34}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		out := m.View()
+		if m.viewMode != ViewModeMerge || m.cursor != cursor {
+			t.Fatalf("%v: view %v cursor %d", size, m.viewMode, m.cursor)
+		}
+		if !strings.Contains(out, "▶") {
+			t.Errorf("%v: the cursor scrolled away:\n%s", size, out)
+		}
+		lines := strings.Split(out, "\n")
+		if len(lines) > size[1] {
+			t.Errorf("%v: %d lines tall", size, len(lines))
+		}
+		for _, line := range lines {
+			if lipgloss.Width(line) > size[0] {
+				t.Errorf("%v: line %d wide", size, lipgloss.Width(line))
+			}
+		}
+	}
+}

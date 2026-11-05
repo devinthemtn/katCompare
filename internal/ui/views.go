@@ -734,6 +734,10 @@ Tool choices
   Per repository         <repo>/.git/config (overrides global)
   Editor variables       Set in your shell profile (~/.bashrc, ~/.zshrc, ...)
 
+Text size
+  Your terminal sets the font, so use its own zoom: Ctrl+= and Ctrl+- in Windows
+  Terminal and many others. The layout adjusts to fit.
+
 Only text files are listed; other files are detected and skipped.`
 
 // renderHelpBody renders the scrollable part of the help screen.

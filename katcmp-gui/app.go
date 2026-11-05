@@ -983,6 +983,9 @@ type ToolInfo struct {
 // Settings are the app's preferences, from the config file.
 type Settings struct {
 	AutoCollapsePaths  bool    `json:"autoCollapsePaths"`
+	FontFamily         string  `json:"fontFamily"`
+	FontScale          float64 `json:"fontScale"` // the interface's size, relative to its design
+	DiffFontFamily     string  `json:"diffFontFamily"`
 	DiffFontSize       float64 `json:"diffFontSize"`
 	DefaultView        string  `json:"defaultView"`
 	DefaultMergeTarget string  `json:"defaultMergeTarget"`
@@ -1000,6 +1003,9 @@ func (a *App) GetSettings() Settings {
 		s.ConfigError = err.Error()
 	}
 	s.AutoCollapsePaths = cfg.GUI.AutoCollapsePaths
+	s.FontFamily = cfg.GUI.FontFamily
+	s.FontScale = cfg.GUI.FontSize / config.DefaultFontSize
+	s.DiffFontFamily = cfg.GUI.DiffFontFamily
 	s.DiffFontSize = cfg.GUI.DiffFontSize
 	s.DefaultView = cfg.View.DefaultView
 	s.DefaultMergeTarget = cfg.View.DefaultMergeTarget

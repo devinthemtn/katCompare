@@ -48,6 +48,8 @@ function loadLayout() {
 
 const state = {
     layout: loadLayout(), // { filesCollapsed, pathsCollapsed, focus }; focus hides both without changing them
+    fontSettings: { fontScale: 1, diffFontSize: 12.5 }, // the sizes in the config file
+    fontZoom: 1, // Ctrl+= and Ctrl+- on top of those, set from storage at startup
     compareFailed: false, // the last Compare failed, so the paths bar stays open to fix it
     mode: 'paths', // 'paths' | 'git'
     comparison: null, // ComparisonResult from the backend
@@ -460,9 +462,62 @@ el('swap-paths').addEventListener('click', () => {
 // Compare actions
 // ---------------------------------------------------------------------------
 
+// ---- Font zoom: Ctrl+= and Ctrl+- on top of the sizes in the config file ----
+
+const FONT_ZOOM_KEY = 'katcompare.fontZoom';
+const FONT_ZOOM_STEP = 0.1;
+const FONT_ZOOM_MIN = 0.5;
+const FONT_ZOOM_MAX = 2.5;
+
+// The sizes the config file allows, which zooming stays within too.
+const FONT_SIZE_MIN = 8;
+const FONT_SIZE_MAX = 32;
+const FONT_SIZE_DESIGN = 13; // the interface size that a font scale of 1 means
+
+// loadFontZoom returns the zoom from an earlier run. Storage can be missing or
+// hold anything, so only a number in range is trusted.
+function loadFontZoom() {
+    try {
+        const saved = Number(localStorage.getItem(FONT_ZOOM_KEY));
+        if (saved >= FONT_ZOOM_MIN && saved <= FONT_ZOOM_MAX) return saved;
+    } catch {
+        // Fall back to no zoom.
+    }
+    return 1;
+}
+
+function clampFontSize(size) {
+    return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, size));
+}
+
+// applyFontSizes sets the sizes from the config file, times the zoom.
+function applyFontSizes() {
+    const { fontScale, diffFontSize } = state.fontSettings;
+    const rootStyle = document.documentElement.style;
+    rootStyle.setProperty('--font-scale', String(clampFontSize(fontScale * FONT_SIZE_DESIGN * state.fontZoom) / FONT_SIZE_DESIGN));
+    rootStyle.setProperty('--diff-font-size', `${clampFontSize(diffFontSize * state.fontZoom)}px`);
+    updateStickyToolbar(); // the toolbar's share of the space has changed
+}
+
+function setFontZoom(zoom) {
+    state.fontZoom = Math.round(Math.min(FONT_ZOOM_MAX, Math.max(FONT_ZOOM_MIN, zoom)) * 10) / 10;
+    try {
+        localStorage.setItem(FONT_ZOOM_KEY, String(state.fontZoom));
+    } catch {
+        // The size just won't be remembered.
+    }
+    applyFontSizes();
+    setStatus(`Font size ${Math.round(state.fontZoom * 100)}%${state.fontZoom === 1 ? ' (as in the config file)' : ''}`);
+}
+
 // applySettings applies the settings that can change while the app runs.
 function applySettings(settings) {
-    document.documentElement.style.setProperty('--diff-font-size', `${settings.diffFontSize}px`);
+    state.fontSettings = settings;
+    applyFontSizes();
+    const rootStyle = document.documentElement.style;
+    // A font that isn't installed falls through to the built-in one after it.
+    rootStyle.setProperty('--font-ui', settings.fontFamily ? `${settings.fontFamily}, var(--font-ui-default)` : 'var(--font-ui-default)');
+    rootStyle.setProperty('--font-diff', settings.diffFontFamily ? `${settings.diffFontFamily}, var(--font-diff-default)` : 'var(--font-diff-default)');
     state.defaultView = settings.defaultView;
     state.defaultMergeTarget = settings.defaultMergeTarget;
 }
@@ -1648,6 +1703,14 @@ helpModal.addEventListener('mousedown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+    // Font size, before anything that ignores keys while typing. This also stops
+    // the browser's own page zoom, which would scale everything differently.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && ['=', '+', '-', '_', '0'].includes(e.key)) {
+        e.preventDefault();
+        if (e.key === '0') setFontZoom(1);
+        else setFontZoom(state.fontZoom + (e.key === '=' || e.key === '+' ? FONT_ZOOM_STEP : -FONT_ZOOM_STEP));
+        return;
+    }
     const openMenu = document.querySelector('.more-menu[open]');
     if (e.key === 'Escape' && openMenu) {
         openMenu.open = false;
@@ -1695,6 +1758,8 @@ document.addEventListener('keydown', (e) => {
 // Initial render
 // ---------------------------------------------------------------------------
 
+state.fontZoom = loadFontZoom();
+applyFontSizes();
 applyLayout();
 renderContentHeader();
 
