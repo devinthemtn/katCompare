@@ -576,9 +576,12 @@ examples/       # Sample files for testing
 | `q`/`Ctrl+C` | ✅ | ✅ | ✅ | ✅ | Quit |
 
 ### Performance Tips
-- Large files (>10MB) may take a moment to process
-- Directory comparisons are optimized to only load text files
-- The diff algorithm uses semantic cleanup for better readability
+- A folder comparison reads only the start of each file, to tell text from binary, and keeps no file text in memory until you open a file. Files of different sizes are known to differ without being read. Files of the same size are compared once and not kept
+- The diff (Myers' algorithm, as in git and GNU diff) uses memory proportional to file size. In testing, a 12,000-line file with scattered changes took about 4 ms and 7 MB, and a 200,000-line file about 80 ms and 125 MB. Very large files with little in common stop looking for the shortest possible diff, so the result is correct but may not be minimal
+- In the GUI, every line of a large file is on the page, so opening a 50,000-line file takes a few seconds. Merge ticks stay quick. The TUI draws only what's on screen
+- `ignore` in the [config file](#config-file) skips folders like `node_modules` entirely
+- Git mode still loads each changed file's text, because it comes from `git show`
+- A file you open shows its text as of that moment, which can be newer than the list if it changed after loading. Reload to refresh the list. While a file is open, an outside edit shows as **Changed on disk**
 
 ## License
 

@@ -4,6 +4,7 @@ import {
     LoadGitComparison,
     ListGitRefs,
     GetDiff,
+    GetSideBySide,
     GetInitialPaths,
     SaveMerge,
     CheckTargetOnDisk,
@@ -668,6 +669,9 @@ function renderFileList() {
 // Diff loading & rendering
 // ---------------------------------------------------------------------------
 
+// selectFileSeq identifies the latest file picked, so older answers are ignored.
+let selectFileSeq = 0;
+
 async function selectFile(relPath) {
     state.selectedRelPath = relPath;
     // Read this before the first await: the save handler clears it once its
@@ -675,9 +679,12 @@ async function selectFile(relPath) {
     const justSaved = state.justSavedRelPath === relPath;
     state.justSavedRelPath = null;
     renderFileList();
+    const seq = ++selectFileSeq;
 
     try {
         const diff = await GetDiff(relPath);
+        // Another file was picked while this one loaded, so this answer is old.
+        if (seq !== selectFileSeq) return;
         const sameFile = state.diff?.relPath === relPath;
         state.diff = diff;
         state.targetDisk = 'unchanged';
@@ -1066,6 +1073,19 @@ function sbsCell(content, lineNum, cls, side) {
 }
 
 function renderSideBySide(diff) {
+    // Rows come separately, so that only the view in use is sent to the page.
+    if (!diff.sideBySide) {
+        contentBodyEl.innerHTML = '<div class="empty-state">Loading…</div>';
+        GetSideBySide(diff.relPath)
+            .then((rows) => {
+                diff.sideBySide = rows || [];
+                if (state.diff === diff && state.diffView === 'sidebyside') renderSideBySide(diff);
+            })
+            .catch((err) => {
+                if (state.diff === diff) setStatus(goErrorMessage(err), 'error');
+            });
+        return;
+    }
     contentBodyEl.innerHTML = `<div class="sbs-table">${diff.sideBySide
         .map((row, i) => {
             let leftCls = '';
@@ -1269,21 +1289,16 @@ function toggleMergeBlock(diff, start) {
         if (allOn) setFor(i).delete(i);
         else setFor(i).add(i);
     }
+    return end;
 }
 
 function mergeStats() {
     const diff = state.diff;
-    let totalIns = 0,
-        totalDel = 0;
-    diff.lines.forEach((l) => {
-        if (l.type === 'insert') totalIns++;
-        if (l.type === 'delete') totalDel++;
-    });
     return {
         selIns: state.mergeSelection.insertions.size,
-        totalIns,
+        totalIns: diff.inserted,
         selDel: state.mergeSelection.deletions.size,
-        totalDel,
+        totalDel: diff.deleted,
     };
 }
 
@@ -1343,31 +1358,12 @@ async function refreshTargetDisk() {
         renderFileList();
     }
     if (state.diffView !== 'merge') return;
-    const top = contentBodyEl.scrollTop;
-    renderContentBody();
-    contentBodyEl.scrollTop = top;
+    renderMergeToolbar(diff);
 }
 
 window.addEventListener('focus', refreshTargetDisk);
 
 function renderMerge(diff) {
-    const stats = mergeStats();
-    const editable = { left: diff.leftEditable, right: diff.rightEditable };
-    const targetLabel = state.mergeTarget === 'left' ? diff.leftLabel : diff.rightLabel;
-    const targetName = targetLabel.split(/[\\/]/).pop();
-    const isFile = editable[state.mergeTarget];
-    const pending = stats.selIns + stats.selDel;
-    const effect = saveEffect(stats, state.mergeTarget, targetName);
-    const canSave = isFile && pending > 0 && state.targetDisk !== 'missing';
-    const notFile = 'This side is a git revision, not a file on disk';
-    const overwriting = state.targetDisk === 'changed';
-    const saveLabel = overwriting ? 'Overwrite anyway' : `Save to ${escapeHtml(targetName)}`;
-    let saveTitle = `${escapeHtml(effect)} (the old version is kept as ${escapeHtml(targetName)}.orig)`;
-    if (!isFile) saveTitle = notFile;
-    else if (state.targetDisk === 'missing') saveTitle = `${escapeHtml(targetName)} no longer exists`;
-    else if (pending === 0) saveTitle = 'No changes are checked, so there is nothing to save';
-    else if (overwriting) saveTitle = `${escapeHtml(targetName)} changed on disk after it was loaded. Saving replaces those edits (the current version is kept as ${escapeHtml(targetName)}.orig)`;
-
     const lineRows = diff.lines
         .map((line, i) => {
             if (line.type === 'equal') {
@@ -1395,23 +1391,87 @@ function renderMerge(diff) {
         .join('');
 
     contentBodyEl.innerHTML = `
-        <div class="merge-toolbar">
-            <div class="segmented" id="merge-target-toggle">
-                <button class="segmented-btn${state.mergeTarget === 'left' ? ' active' : ''}" data-target="left" ${editable.left ? 'title="Apply the checked changes to the left file"' : `disabled title="${notFile}"`}>Apply to left</button>
-                <button class="segmented-btn${state.mergeTarget === 'right' ? ' active' : ''}" data-target="right" ${editable.right ? 'title="Apply the checked changes to the right file"' : `disabled title="${notFile}"`}>Apply to right</button>
-            </div>
-            <div class="stats selection-stats">
-                <span class="stat-insert">Insertions: ${stats.selIns}/${stats.totalIns} selected</span>
-                <span class="stat-delete">Deletions: ${stats.selDel}/${stats.totalDel} selected</span>
-            </div>
-            ${isFile ? saveStateHtml(pending, effect, targetName) : ''}
-            <div class="merge-actions">
-                <button class="btn btn-ghost btn-small" id="merge-select-all">Select all</button>
-                <button class="btn btn-ghost btn-small" id="merge-select-none">Select none</button>
-                <button class="btn btn-primary btn-small" id="merge-save" title="${saveTitle}" ${canSave ? '' : 'disabled'}>${saveLabel}</button>
-            </div>
-        </div>
+        <div class="merge-toolbar" id="merge-toolbar"></div>
         <div id="merge-lines">${lineRows}</div>
+    `;
+    renderMergeToolbar(diff);
+
+    // One listener for all the rows, which can number in the tens of thousands.
+    const linesEl = el('merge-lines');
+    linesEl.addEventListener('change', (e) => {
+        if (!e.target.matches('input[type="checkbox"]')) return;
+        const i = Number(e.target.dataset.index);
+        const set = diff.lines[i].type === 'insert' ? state.mergeSelection.insertions : state.mergeSelection.deletions;
+        if (e.target.checked) set.add(i);
+        else set.delete(i);
+        syncMergeRows(diff, i, i);
+        mergePicksChanged(diff);
+    });
+    linesEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.block-toggle');
+        if (!btn) return;
+        const start = Number(btn.dataset.block);
+        const end = toggleMergeBlock(diff, start);
+        syncMergeRows(diff, start, end);
+        mergePicksChanged(diff);
+    });
+
+    refreshTargetDisk();
+}
+
+// syncMergeRows makes rows first to last show the current picks, in place.
+function syncMergeRows(diff, first, last) {
+    const rows = el('merge-lines').children;
+    for (let i = first; i <= last; i++) {
+        const line = diff.lines[i];
+        if (line.type === 'equal') continue;
+        const set = line.type === 'insert' ? state.mergeSelection.insertions : state.mergeSelection.deletions;
+        const selected = set.has(i);
+        rows[i].classList.toggle('selected', selected);
+        rows[i].classList.toggle('unselected', !selected);
+        rows[i].querySelector('input[type="checkbox"]').checked = selected;
+    }
+}
+
+function mergePicksChanged(diff) {
+    renderMergeToolbar(diff);
+    refreshTargetDisk();
+}
+
+// renderMergeToolbar draws the toolbar, which changes with every pick.
+function renderMergeToolbar(diff) {
+    const stats = mergeStats();
+    const editable = { left: diff.leftEditable, right: diff.rightEditable };
+    const targetLabel = state.mergeTarget === 'left' ? diff.leftLabel : diff.rightLabel;
+    const targetName = targetLabel.split(/[\\/]/).pop();
+    const isFile = editable[state.mergeTarget];
+    const pending = stats.selIns + stats.selDel;
+    const effect = saveEffect(stats, state.mergeTarget, targetName);
+    const canSave = isFile && pending > 0 && state.targetDisk !== 'missing';
+    const notFile = 'This side is a git revision, not a file on disk';
+    const overwriting = state.targetDisk === 'changed';
+    const saveLabel = overwriting ? 'Overwrite anyway' : `Save to ${escapeHtml(targetName)}`;
+    let saveTitle = `${escapeHtml(effect)} (the old version is kept as ${escapeHtml(targetName)}.orig)`;
+    if (!isFile) saveTitle = notFile;
+    else if (state.targetDisk === 'missing') saveTitle = `${escapeHtml(targetName)} no longer exists`;
+    else if (pending === 0) saveTitle = 'No changes are checked, so there is nothing to save';
+    else if (overwriting) saveTitle = `${escapeHtml(targetName)} changed on disk after it was loaded. Saving replaces those edits (the current version is kept as ${escapeHtml(targetName)}.orig)`;
+
+    el('merge-toolbar').innerHTML = `
+        <div class="segmented" id="merge-target-toggle">
+            <button class="segmented-btn${state.mergeTarget === 'left' ? ' active' : ''}" data-target="left" ${editable.left ? 'title="Apply the checked changes to the left file"' : `disabled title="${notFile}"`}>Apply to left</button>
+            <button class="segmented-btn${state.mergeTarget === 'right' ? ' active' : ''}" data-target="right" ${editable.right ? 'title="Apply the checked changes to the right file"' : `disabled title="${notFile}"`}>Apply to right</button>
+        </div>
+        <div class="stats selection-stats">
+            <span class="stat-insert">Insertions: ${stats.selIns}/${stats.totalIns} selected</span>
+            <span class="stat-delete">Deletions: ${stats.selDel}/${stats.totalDel} selected</span>
+        </div>
+        ${isFile ? saveStateHtml(pending, effect, targetName) : ''}
+        <div class="merge-actions">
+            <button class="btn btn-ghost btn-small" id="merge-select-all">Select all</button>
+            <button class="btn btn-ghost btn-small" id="merge-select-none">Select none</button>
+            <button class="btn btn-primary btn-small" id="merge-save" title="${saveTitle}" ${canSave ? '' : 'disabled'}>${saveLabel}</button>
+        </div>
     `;
     updateStickyToolbar();
 
@@ -1420,7 +1480,7 @@ function renderMerge(diff) {
             if (btn.disabled) return;
             state.mergeTarget = btn.dataset.target;
             state.targetDisk = 'unchanged';
-            renderContentBody();
+            mergePicksChanged(diff);
         });
     });
 
@@ -1428,29 +1488,13 @@ function renderMerge(diff) {
 
     el('merge-select-all').addEventListener('click', () => {
         resetMergeSelection();
-        renderContentBody();
+        syncMergeRows(diff, 0, diff.lines.length - 1);
+        mergePicksChanged(diff);
     });
     el('merge-select-none').addEventListener('click', () => {
         state.mergeSelection = { insertions: new Set(), deletions: new Set() };
-        renderContentBody();
-    });
-
-    document.querySelectorAll('#merge-lines input[type="checkbox"]').forEach((cb) => {
-        cb.addEventListener('change', () => {
-            const i = Number(cb.dataset.index);
-            const line = diff.lines[i];
-            const set = line.type === 'insert' ? state.mergeSelection.insertions : state.mergeSelection.deletions;
-            if (cb.checked) set.add(i);
-            else set.delete(i);
-            renderContentBody();
-        });
-    });
-
-    document.querySelectorAll('#merge-lines .block-toggle').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            toggleMergeBlock(diff, Number(btn.dataset.block));
-            renderContentBody();
-        });
+        syncMergeRows(diff, 0, diff.lines.length - 1);
+        mergePicksChanged(diff);
     });
 
     el('merge-save').addEventListener('click', async () => {
@@ -1461,14 +1505,13 @@ function renderMerge(diff) {
                 target: state.mergeTarget,
                 selectedInsertions: [...state.mergeSelection.insertions],
                 selectedDeletions: [...state.mergeSelection.deletions],
+                token: diff.token,
             });
             await reloadAfterSave(diff.relPath, msg);
         } catch (err) {
             setStatus(goErrorMessage(err), 'error');
         }
     });
-
-    refreshTargetDisk();
 }
 
 // ---------------------------------------------------------------------------
@@ -1568,9 +1611,10 @@ el('copy-execute-btn').addEventListener('click', async () => {
     try {
         const msg = await CopyFiles(relPaths, state.copyTarget);
         closeCopyModal();
-        setStatus(msg, 'success');
         // Refresh the comparison so copied files now show as identical/common.
-        reloadComparison();
+        await reloadComparison();
+        // After the reload, or its own status would replace this.
+        if (!statusbarEl.classList.contains('error')) setStatus(msg, msg.includes('error(s)') ? 'warning' : 'success');
     } catch (err) {
         setStatus(goErrorMessage(err), 'error');
     }

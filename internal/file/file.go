@@ -1,22 +1,53 @@
 package file
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // FileInfo represents information about a file or directory
 type FileInfo struct {
-	Path     string
-	Name     string
-	IsDir    bool
-	Size     int64
+	Path  string
+	Name  string
+	IsDir bool
+	Size  int64
+	// Content is the text of a file that isn't read from disk, such as one from
+	// git. A file loaded from a directory leaves it empty: use Text.
 	Content  string
 	Children []*FileInfo
+
+	onDisk bool // the text stays on disk until Text asks for it
+	empty  bool // an empty file with no name marking it as text isn't listed
+	binary bool // found to be binary when loaded, so it isn't listed
+	failed bool // couldn't be read; removed from the tree when loading finishes
+}
+
+// Text returns the file's text, reading it from disk if that's where it is. It
+// isn't kept, so a folder's files don't all stay in memory: hold on to what's
+// returned for as long as it's on screen.
+func (fi *FileInfo) Text() (string, error) {
+	if !fi.onDisk {
+		return fi.Content, nil
+	}
+	f, err := os.Open(fi.Path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	// A Builder sized in advance holds the file once, where reading to a byte
+	// slice and converting holds it twice at the peak.
+	var content strings.Builder
+	content.Grow(int(fi.Size) + 1)
+	if _, err := io.Copy(&content, f); err != nil {
+		return "", err
+	}
+	return content.String(), nil
 }
 
 // Options says what to leave out when loading a directory.
@@ -67,14 +98,58 @@ func (m *Manager) SetOptions(opts Options) {
 	m.opts = opts
 }
 
+// maxParallelReads limits how many files are read at once. It helps most on
+// slow paths such as network drives or \\wsl.localhost.
+const maxParallelReads = 16
+
 // LoadPath loads a file or directory and returns FileInfo. A path named here is
 // always loaded: Options only applies to what's found inside a directory.
 func (m *Manager) LoadPath(path string) (*FileInfo, error) {
-	return m.load(path, "")
+	var files []*FileInfo
+	root, err := m.scan(path, "", &files)
+	if err != nil {
+		return nil, err
+	}
+
+	jobs := make(chan *FileInfo)
+	var wg sync.WaitGroup
+	for i := 0; i < maxParallelReads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for fi := range jobs {
+				fi.failed = fi.read() != nil
+			}
+		}()
+	}
+	for _, fi := range files {
+		jobs <- fi
+	}
+	close(jobs)
+	wg.Wait()
+
+	if root.failed {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, root.read())
+	}
+	root.removeFailed()
+	return root, nil
 }
 
-// load loads path; rel is its slash-separated path from the root of the load.
-func (m *Manager) load(filePath, rel string) (*FileInfo, error) {
+// removeFailed drops files that couldn't be read, as if they weren't there.
+func (fi *FileInfo) removeFailed() {
+	kept := fi.Children[:0]
+	for _, child := range fi.Children {
+		if !child.failed {
+			child.removeFailed()
+			kept = append(kept, child)
+		}
+	}
+	fi.Children = kept
+}
+
+// scan builds the tree for filePath without reading any file's content, adding
+// each file to files. rel is its slash-separated path from the root of the load.
+func (m *Manager) scan(filePath, rel string, files *[]*FileInfo) (*FileInfo, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat path %s: %w", filePath, err)
@@ -88,24 +163,20 @@ func (m *Manager) load(filePath, rel string) (*FileInfo, error) {
 	}
 
 	if info.IsDir() {
-		children, err := m.loadDirectory(filePath, rel)
+		children, err := m.loadDirectory(filePath, rel, files)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load directory %s: %w", filePath, err)
 		}
 		fileInfo.Children = children
 	} else {
-		content, err := m.readFile(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
-		}
-		fileInfo.Content = content
+		*files = append(*files, fileInfo)
 	}
 
 	return fileInfo, nil
 }
 
 // loadDirectory recursively loads directory contents
-func (m *Manager) loadDirectory(dirPath, rel string) ([]*FileInfo, error) {
+func (m *Manager) loadDirectory(dirPath, rel string, files *[]*FileInfo) ([]*FileInfo, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -127,7 +198,7 @@ func (m *Manager) loadDirectory(dirPath, rel string) ([]*FileInfo, error) {
 			continue
 		}
 
-		childInfo, err := m.load(childPath, childRel)
+		childInfo, err := m.scan(childPath, childRel, files)
 		if err != nil {
 			// Log error but continue with other files
 			continue
@@ -138,33 +209,63 @@ func (m *Manager) loadDirectory(dirPath, rel string) ([]*FileInfo, error) {
 	return children, nil
 }
 
-// readFile reads the content of a file
-func (m *Manager) readFile(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
+// Stamp identifies the version of the file on disk, by its size and time, so a
+// caller can tell whether text it read earlier is still current. It's empty for
+// text that isn't on disk, such as from git.
+func (fi *FileInfo) Stamp() string {
+	if !fi.onDisk {
+		return ""
 	}
-	defer file.Close()
-
-	content, err := io.ReadAll(file)
+	info, err := os.Stat(fi.Path)
 	if err != nil {
-		return "", err
+		return "gone"
 	}
-
-	return string(content), nil
+	return fmt.Sprintf("%d/%d", info.Size(), info.ModTime().UnixNano())
 }
 
-// GetReader returns an io.Reader for the file content
-func (fi *FileInfo) GetReader() io.Reader {
-	return strings.NewReader(fi.Content)
+// sniffSize is how much of a file decides whether it's binary, as in git.
+const sniffSize = 8000
+
+// sniffBuffers saves allocating a buffer for each file in a large folder.
+var sniffBuffers = sync.Pool{New: func() any { return make([]byte, sniffSize) }}
+
+// read checks the file can be read and whether it's text, from its start alone.
+func (fi *FileInfo) read() error {
+	f, err := os.Open(fi.Path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	head := sniffBuffers.Get().([]byte)
+	defer sniffBuffers.Put(head)
+	n, err := io.ReadFull(f, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return err
+	}
+	fi.onDisk = true
+	fi.empty = n == 0
+	fi.binary = !fi.hasTextName() && bytes.IndexByte(head[:n], 0) >= 0
+	return nil
 }
 
 // IsTextFile checks if the file appears to be a text file. Known extensions and
 // names are accepted directly; anything else is sniffed for binary content.
 func (fi *FileInfo) IsTextFile() bool {
-	if fi.IsDir {
+	if fi.IsDir || fi.binary {
 		return false
 	}
+	if fi.hasTextName() {
+		return true
+	}
+	if fi.onDisk {
+		return !fi.empty
+	}
+	return looksLikeText(fi.Content)
+}
+
+// hasTextName reports whether the file's extension or name marks it as text.
+func (fi *FileInfo) hasTextName() bool {
 
 	ext := strings.ToLower(filepath.Ext(fi.Path))
 	textExts := []string{
@@ -197,7 +298,7 @@ func (fi *FileInfo) IsTextFile() bool {
 		}
 	}
 
-	return looksLikeText(fi.Content)
+	return false
 }
 
 // looksLikeText reports whether content appears to be text, using the same
@@ -273,35 +374,6 @@ func relativeKey(root, file *FileInfo) (string, bool) {
 	return rel, true
 }
 
-// FindCommonFiles finds files that exist in both file trees with the same relative path
-func FindCommonFiles(left, right *FileInfo) map[string][2]*FileInfo {
-	leftFiles := make(map[string]*FileInfo)
-	rightFiles := make(map[string]*FileInfo)
-
-	// Get all text files and create relative path maps
-	for _, file := range left.GetTextFiles() {
-		if rel, ok := relativeKey(left, file); ok {
-			leftFiles[rel] = file
-		}
-	}
-
-	for _, file := range right.GetTextFiles() {
-		if rel, ok := relativeKey(right, file); ok {
-			rightFiles[rel] = file
-		}
-	}
-
-	// Find common files
-	common := make(map[string][2]*FileInfo)
-	for relPath, leftFile := range leftFiles {
-		if rightFile, exists := rightFiles[relPath]; exists {
-			common[relPath] = [2]*FileInfo{leftFile, rightFile}
-		}
-	}
-
-	return common
-}
-
 // FindAllFiles finds all files from both directories, including unique files
 func FindAllFiles(left, right *FileInfo) map[string]*FileComparison {
 	leftFiles := make(map[string]*FileInfo)
@@ -351,4 +423,103 @@ func FindAllFiles(left, right *FileInfo) map[string]*FileComparison {
 	}
 
 	return allFiles
+}
+
+// Identical finds which files on both sides have no differences, comparing up
+// to maxParallelReads at once and keeping none of their text. same says whether
+// two texts count as the same when something is being ignored. Leave it nil to
+// compare bytes, where files of different sizes needn't be read at all.
+func Identical(files map[string]*FileComparison, same func(left, right string) bool) map[string]bool {
+	type result struct {
+		relPath   string
+		identical bool
+	}
+	jobs := make(chan string)
+	results := make(chan result)
+	var wg sync.WaitGroup
+	for i := 0; i < maxParallelReads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for relPath := range jobs {
+				comp := files[relPath]
+				results <- result{relPath, isIdentical(comp.LeftFile, comp.RightFile, same)}
+			}
+		}()
+	}
+	go func() {
+		for relPath, comp := range files {
+			if comp.Source == SourceBoth {
+				jobs <- relPath
+			}
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+
+	identical := make(map[string]bool)
+	for r := range results {
+		if r.identical {
+			identical[r.relPath] = true
+		}
+	}
+	return identical
+}
+
+// isIdentical compares two files. One that can't be read counts as different, so
+// that it stays in the list and shows the error when it's opened.
+func isIdentical(left, right *FileInfo, same func(left, right string) bool) bool {
+	if same == nil && left.onDisk && right.onDisk {
+		return left.Size == right.Size && sameBytes(left.Path, right.Path)
+	}
+	l, err := left.Text()
+	if err != nil {
+		return false
+	}
+	r, err := right.Text()
+	if err != nil {
+		return false
+	}
+	if same != nil {
+		return same(l, r)
+	}
+	return l == r
+}
+
+// compareBuffers saves allocating buffers for each file in a large folder.
+var compareBuffers = sync.Pool{New: func() any { return make([]byte, 64*1024) }}
+
+// sameBytes compares two files on disk, stopping at the first difference.
+func sameBytes(leftPath, rightPath string) bool {
+	l, err := os.Open(leftPath)
+	if err != nil {
+		return false
+	}
+	defer l.Close()
+	r, err := os.Open(rightPath)
+	if err != nil {
+		return false
+	}
+	defer r.Close()
+
+	leftBuf := compareBuffers.Get().([]byte)
+	defer compareBuffers.Put(leftBuf)
+	rightBuf := compareBuffers.Get().([]byte)
+	defer compareBuffers.Put(rightBuf)
+	for {
+		n, leftErr := io.ReadFull(l, leftBuf)
+		m, rightErr := io.ReadFull(r, rightBuf)
+		if n != m || !bytes.Equal(leftBuf[:n], rightBuf[:m]) {
+			return false
+		}
+		leftDone := leftErr == io.EOF || leftErr == io.ErrUnexpectedEOF
+		rightDone := rightErr == io.EOF || rightErr == io.ErrUnexpectedEOF
+		if leftDone || rightDone {
+			return leftDone && rightDone
+		}
+		if leftErr != nil || rightErr != nil {
+			return false
+		}
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"katcompare/internal/config"
 	"katcompare/internal/conflict"
@@ -48,6 +49,14 @@ type App struct {
 	// recomputes has to come out the same as the one on screen.
 	diffOpts      differ.Options
 	hideIdentical bool
+
+	// Files read recently, oldest first. Frontend calls can overlap, so access
+	// goes through openMu.
+	openMu    sync.Mutex
+	opened    []*openedFile
+	openToken int
+
+	identical map[string]bool // files with no differences to show
 
 	// Paths passed on the command line, pre-filled into the UI on startup.
 	initialPaths []string
@@ -121,17 +130,16 @@ type SideBySideRowDTO struct {
 }
 
 type DiffResult struct {
-	RelPath     string             `json:"relPath"`
-	DisplayName string             `json:"displayName"`
-	Source      string             `json:"source"`
-	LeftLabel   string             `json:"leftLabel"`
-	RightLabel  string             `json:"rightLabel"`
-	Lines       []DiffLineDTO      `json:"lines"`
-	SideBySide  []SideBySideRowDTO `json:"sideBySide"`
-	Equal       int                `json:"equal"`
-	Inserted    int                `json:"inserted"`
-	Deleted     int                `json:"deleted"`
-	CanMerge    bool               `json:"canMerge"`
+	RelPath     string        `json:"relPath"`
+	DisplayName string        `json:"displayName"`
+	Source      string        `json:"source"`
+	LeftLabel   string        `json:"leftLabel"`
+	RightLabel  string        `json:"rightLabel"`
+	Lines       []DiffLineDTO `json:"lines"`
+	Equal       int           `json:"equal"`
+	Inserted    int           `json:"inserted"`
+	Deleted     int           `json:"deleted"`
+	CanMerge    bool          `json:"canMerge"`
 
 	// Whether each side is a real file on disk that can be opened in an editor.
 	LeftEditable  bool `json:"leftEditable"`
@@ -140,6 +148,7 @@ type DiffResult struct {
 
 	MergeStatus *MergeStatusDTO `json:"mergeStatus,omitempty"`
 	Ignoring    string          `json:"ignoring"` // what the diff ignores, or ""
+	Token       int             `json:"token"`    // pass back to SaveMerge
 }
 
 type GitRefOption struct {
@@ -153,6 +162,7 @@ type MergeSaveRequest struct {
 	Target             string `json:"target"` // "left" | "right"
 	SelectedInsertions []int  `json:"selectedInsertions"`
 	SelectedDeletions  []int  `json:"selectedDeletions"`
+	Token              int    `json:"token"` // from the DiffResult the selections were made on
 }
 
 // ---- Dialogs ----
@@ -388,9 +398,18 @@ func (a *App) applyConfig() {
 	a.diffOpts = cfg.DifferOptions()
 	a.differ = differ.NewWithOptions(a.diffOpts)
 	a.hideIdentical = cfg.Compare.HideIdentical
+	a.openMu.Lock()
+	a.opened = nil
+	a.openMu.Unlock()
 }
 
 func (a *App) buildComparisonResult() *ComparisonResult {
+	var same func(string, string) bool
+	if a.diffOpts.Describe() != "" {
+		same = a.diffOpts.Same
+	}
+	a.identical = file.Identical(a.allFiles, same)
+
 	entries := make([]FileEntry, 0, len(a.allFiles))
 	backups := a.merges.Backups()
 	// Comparing two single files always shows them.
@@ -408,7 +427,7 @@ func (a *App) buildComparisonResult() *ComparisonResult {
 			MergeStatus: a.mergeStatusFor(comp),
 		}
 		if comp.Source == file.SourceBoth {
-			entry.Identical = a.diffOpts.Same(comp.LeftFile.Content, comp.RightFile.Content)
+			entry.Identical = a.identical[relPath]
 			if canHide && entry.Identical && entry.MergeStatus == nil && !entry.Conflicted {
 				hidden++
 				continue
@@ -469,41 +488,20 @@ func sourceString(s file.FileSource) string {
 // ---- Diffing ----
 
 func (a *App) GetDiff(relPath string) (*DiffResult, error) {
-	comp, ok := a.allFiles[relPath]
-	if !ok {
-		return nil, fmt.Errorf("file not found: %s", relPath)
+	opened, err := a.openFile(relPath)
+	if err != nil {
+		return nil, err
 	}
-
-	var leftContent, rightContent, leftLabel, rightLabel string
-
-	switch comp.Source {
-	case file.SourceBoth:
-		leftContent = comp.LeftFile.Content
-		rightContent = comp.RightFile.Content
-		leftLabel = comp.LeftFile.Path
-		rightLabel = comp.RightFile.Path
-	case file.SourceLeft:
-		leftContent = comp.LeftFile.Content
-		leftLabel = comp.LeftFile.Path
-		rightLabel = "<file not found>"
-	case file.SourceRight:
-		rightContent = comp.RightFile.Content
-		leftLabel = "<file not found>"
-		rightLabel = comp.RightFile.Path
-	}
-
-	diff := a.differ.CompareStrings(leftLabel, rightLabel, leftContent, rightContent)
-	sbsRows := differ.BuildSideBySideRows(diff.Lines)
-	equal, inserted, deleted := diff.GetStats()
+	comp := opened.comp
+	equal, inserted, deleted := opened.diff.GetStats()
 
 	return &DiffResult{
 		RelPath:     relPath,
 		DisplayName: a.displayNameForFile(relPath),
 		Source:      sourceString(comp.Source),
-		LeftLabel:   leftLabel,
-		RightLabel:  rightLabel,
-		Lines:       toDiffLineDTOs(diff.Lines),
-		SideBySide:  toSideBySideDTOs(sbsRows),
+		LeftLabel:   opened.diff.LeftFile,
+		RightLabel:  opened.diff.RightFile,
+		Lines:       toDiffLineDTOs(opened.diff.Lines),
 		Equal:       equal,
 		Inserted:    inserted,
 		Deleted:     deleted,
@@ -514,7 +512,90 @@ func (a *App) GetDiff(relPath string) (*DiffResult, error) {
 		Conflicted:    a.conflicts[relPath],
 		MergeStatus:   a.mergeStatusFor(comp),
 		Ignoring:      a.diffOpts.Describe(),
+		Token:         opened.token,
 	}, nil
+}
+
+// GetSideBySide returns the side-by-side rows of an open file. It's separate
+// from GetDiff so that the page only gets the text of the view in use.
+func (a *App) GetSideBySide(relPath string) ([]SideBySideRowDTO, error) {
+	opened := a.findOpened(relPath)
+	if opened == nil {
+		return nil, fmt.Errorf("%s isn't open", relPath)
+	}
+	return toSideBySideDTOs(differ.BuildSideBySideRows(opened.diff.Lines)), nil
+}
+
+// openedFile is a file as shown: its two sides and their diff. A save works from
+// these, so what it writes always matches what was on screen.
+type openedFile struct {
+	relPath     string
+	comp        *file.FileComparison
+	left, right string
+	diff        *differ.FileDiff
+	token       int // says which reading of the file this is
+}
+
+// maxOpenedFiles is how many recent files are kept. Only the latest is on screen,
+// but the page's calls can overlap, so an older file's call can finish after a
+// newer one's. Keeping a few means that can't push out the file on screen.
+const maxOpenedFiles = 4
+
+// findOpened returns the kept copy of relPath, or nil.
+func (a *App) findOpened(relPath string) *openedFile {
+	a.openMu.Lock()
+	defer a.openMu.Unlock()
+	for _, opened := range a.opened {
+		if opened.relPath == relPath {
+			return opened
+		}
+	}
+	return nil
+}
+
+// openFile reads relPath as it is now, and keeps it.
+func (a *App) openFile(relPath string) (*openedFile, error) {
+	comp, ok := a.allFiles[relPath]
+	if !ok {
+		return nil, fmt.Errorf("file not found: %s", relPath)
+	}
+	left, right, leftLabel, rightLabel := "", "", "<file not found>", "<file not found>"
+	var err error
+	if comp.LeftFile != nil {
+		leftLabel = comp.LeftFile.Path
+		if left, err = comp.LeftFile.Text(); err != nil {
+			return nil, fmt.Errorf("couldn't read %s, which may have changed since it was loaded. Compare again to refresh: %w", relPath, err)
+		}
+	}
+	if comp.RightFile != nil {
+		rightLabel = comp.RightFile.Path
+		if right, err = comp.RightFile.Text(); err != nil {
+			return nil, fmt.Errorf("couldn't read %s, which may have changed since it was loaded. Compare again to refresh: %w", relPath, err)
+		}
+	}
+	opened := &openedFile{
+		relPath: relPath,
+		comp:    comp,
+		left:    left,
+		right:   right,
+		diff:    a.differ.CompareStrings(leftLabel, rightLabel, left, right),
+	}
+
+	a.openMu.Lock()
+	defer a.openMu.Unlock()
+	a.openToken++
+	opened.token = a.openToken
+	kept := a.opened[:0]
+	for _, other := range a.opened {
+		if other.relPath != relPath {
+			kept = append(kept, other)
+		}
+	}
+	a.opened = append(kept, opened)
+	if len(a.opened) > maxOpenedFiles {
+		a.opened = a.opened[1:]
+	}
+	return opened, nil
 }
 
 func toDiffLineDTOs(lines []differ.DiffLine) []DiffLineDTO {
@@ -585,7 +666,13 @@ func (a *App) SaveMerge(req MergeSaveRequest) (string, error) {
 		return "", fmt.Errorf("the %s side is a git revision, not a file on disk", req.Target)
 	}
 
-	diff := a.differ.CompareStrings(comp.LeftFile.Path, comp.RightFile.Path, comp.LeftFile.Content, comp.RightFile.Content)
+	// Selections are line numbers in the diff on screen, so a save must use that
+	// diff. Working one out afresh could give lines different numbers.
+	opened := a.findOpened(req.RelPath)
+	if opened == nil || (req.Token != 0 && req.Token != opened.token) {
+		return "", fmt.Errorf("%s is no longer open as shown, so nothing was saved. Select it and try again", req.RelPath)
+	}
+	diff := opened.diff
 
 	selection := &merge.ChangeSelection{
 		ApplyInsertions: make(map[int]bool, len(req.SelectedInsertions)),
@@ -605,7 +692,7 @@ func (a *App) SaveMerge(req MergeSaveRequest) (string, error) {
 		result = a.merger.ApplyToRight(diff, selection)
 	}
 
-	report, err := merge.SaveVerified(targetPath, result.Content)
+	report, err := merge.SaveMerged(targetPath, result)
 	if err != nil {
 		return "", err
 	}
@@ -625,9 +712,14 @@ func (a *App) CheckTargetOnDisk(relPath, target string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("the %s side is not a file on disk", target)
 	}
-	loaded := comp.RightFile.Content
+	// Only a file that's been opened has text to compare with.
+	opened := a.findOpened(relPath)
+	if opened == nil {
+		return "", fmt.Errorf("%s isn't open", relPath)
+	}
+	loaded := opened.right
 	if target == "left" {
-		loaded = comp.LeftFile.Content
+		loaded = opened.left
 	}
 	return merge.DiskState(path, loaded)
 }
@@ -805,7 +897,11 @@ func (a *App) CopyFiles(relPaths []string, target string) (string, error) {
 			errs = append(errs, fmt.Sprintf("%s: %v", relPath, err))
 			continue
 		}
-		if err := os.WriteFile(dstPath, []byte(srcFile.Content), 0644); err != nil {
+		text, err := srcFile.Text()
+		if err == nil {
+			err = os.WriteFile(dstPath, []byte(text), 0644)
+		}
+		if err != nil {
 			errCount++
 			errs = append(errs, fmt.Sprintf("%s: %v", relPath, err))
 			continue

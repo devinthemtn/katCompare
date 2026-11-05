@@ -1,7 +1,9 @@
 package merge
 
 import (
+	"math/rand"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -375,7 +377,7 @@ func TestSaveKeepsLineEndings(t *testing.T) {
 					result = New().ApplyToRight(diff, NewChangeSelection(diff))
 				}
 
-				report, err := SaveVerified(path, result.Content)
+				report, err := SaveMerged(path, result)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -490,7 +492,7 @@ func mergeWith(t *testing.T, opts differ.Options, side, target, other string) st
 		diff := d.CompareStrings("l", "r", other, target)
 		result = New().ApplyToRight(diff, NewChangeSelection(diff))
 	}
-	if _, err := SaveVerified(path, result.Content); err != nil {
+	if _, err := SaveMerged(path, result); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
@@ -546,6 +548,163 @@ func TestMergeWithoutOptionsIsUnchanged(t *testing.T) {
 		for _, side := range []string{"left", "right"} {
 			if got := mergeWith(t, differ.Options{}, side, c.target, c.other); got != c.want {
 				t.Errorf("%s/%s:\n got %q\nwant %q", c.name, side, got, c.want)
+			}
+		}
+	}
+}
+
+// Whatever the files and picks, a merge must equal what's worked out here from
+// the diff lines alone: the target's own text for lines it keeps, the other
+// side's for lines it takes.
+func TestRandomMergesMatchAnIndependentAnswer(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	vocabulary := []string{"a", "b", "c", "  a", "a  ", "\tb", "x y", "xy", "", "é", "日本語", "a\r", "b\r", "\r"}
+	line := func() string { return vocabulary[r.Intn(len(vocabulary))] }
+	build := func() string {
+		var b strings.Builder
+		for i, n := 0, r.Intn(25); i < n; i++ {
+			b.WriteString(line() + "\n")
+		}
+		return b.String()
+	}
+	optionSets := []differ.Options{
+		{},
+		{IgnoreWhitespace: differ.WhitespaceTrailing},
+		{IgnoreWhitespace: differ.WhitespaceAll},
+		{IgnoreLineEndings: true},
+		{IgnoreLineEndings: true, IgnoreWhitespace: differ.WhitespaceAll},
+	}
+	for trial := 0; trial < 4000; trial++ {
+		left, right := build(), build()
+		opts := optionSets[r.Intn(len(optionSets))]
+		diff := differ.NewWithOptions(opts).CompareStrings("l", "r", left, right)
+
+		sel := &ChangeSelection{ApplyInsertions: map[int]bool{}, ApplyDeletions: map[int]bool{}}
+		for i, l := range diff.Lines {
+			if r.Intn(2) == 0 {
+				continue
+			}
+			if l.Type == differ.DiffInsert {
+				sel.ApplyInsertions[i] = true
+			} else if l.Type == differ.DiffDelete {
+				sel.ApplyDeletions[i] = true
+			}
+		}
+
+		var wantLeft, wantRight []string
+		for i, l := range diff.Lines {
+			switch l.Type {
+			case differ.DiffEqual:
+				wantLeft = append(wantLeft, l.Content)
+				wantRight = append(wantRight, l.RightContent)
+			case differ.DiffDelete:
+				if !sel.ApplyDeletions[i] {
+					wantLeft = append(wantLeft, l.Content)
+				} else {
+					wantRight = append(wantRight, l.Content)
+				}
+			case differ.DiffInsert:
+				if sel.ApplyInsertions[i] {
+					wantLeft = append(wantLeft, l.Content)
+				} else {
+					wantRight = append(wantRight, l.Content)
+				}
+			}
+		}
+		strip := func(lines []string) []string {
+			out := make([]string, len(lines))
+			for i, l := range lines {
+				out[i] = l
+				if opts.IgnoreLineEndings {
+					out[i] = strings.TrimSuffix(l, "\r")
+				}
+			}
+			return out
+		}
+		gotL := New().ApplyToLeft(diff, sel).Content
+		gotR := New().ApplyToRight(diff, sel).Content
+		if a, b := strings.Split(gotL, "\n"), wantLeft; len(b) > 0 && !reflect.DeepEqual(strip(a), strip(b)) {
+			t.Fatalf("trial %d %+v left:\n got %q\nwant %q\nfrom %q / %q", trial, opts, a, b, left, right)
+		}
+		if a, b := strings.Split(gotR, "\n"), wantRight; len(b) > 0 && !reflect.DeepEqual(strip(a), strip(b)) {
+			t.Fatalf("trial %d %+v right:\n got %q\nwant %q\nfrom %q / %q", trial, opts, a, b, left, right)
+		}
+
+		// With everything picked and nothing ignored, the target becomes the other side.
+		if opts == (differ.Options{}) {
+			all := NewChangeSelection(diff)
+			if got := New().ApplyToLeft(diff, all).Content; right != "" && got+"\n" != right && got != right {
+				t.Fatalf("trial %d: applying all to left gave %q, want %q", trial, got, right)
+			}
+			if got := New().ApplyToRight(diff, all).Content; left != "" && got+"\n" != left && got != left {
+				t.Fatalf("trial %d: applying all to right gave %q, want %q", trial, got, left)
+			}
+			none := &ChangeSelection{ApplyInsertions: map[int]bool{}, ApplyDeletions: map[int]bool{}}
+			if got := New().ApplyToLeft(diff, none).Content; left != "" && got+"\n" != left && got != left {
+				t.Fatalf("trial %d: applying none to left gave %q, want %q", trial, got, left)
+			}
+		}
+	}
+}
+
+// The end of a file is easy to get wrong: a merge result has lost its final
+// newline, but can still end in blank lines.
+func TestMergeKeepsTheEndOfTheFile(t *testing.T) {
+	cases := []struct {
+		name, target, other, want string
+	}{
+		{"blank lines at the end", "\n\n\n", "\n\n", "\n\n"},
+		{"gaining a blank line", "a\n", "a\n\n", "a\n\n"},
+		{"losing a blank line", "a\n\n", "a\n", "a\n"},
+		{"keeping blank lines through a change", "old\n\n\n", "new\n\n\n", "new\n\n\n"},
+		{"CRLF blank lines", "old\r\n\r\n", "new\r\n\r\n", "new\r\n\r\n"},
+		{"no final newline stays that way", "a\nb", "a\nc", "a\nc"},
+		{"everything removed", "a\nb\n", "", ""},
+		{"filling an empty file", "", "a\nb\n", "a\nb\n"},
+		{"just one blank line", "a\n", "\n", "\n"},
+	}
+	for _, c := range cases {
+		for _, side := range []string{"left", "right"} {
+			if got := mergeWith(t, differ.Options{}, side, c.target, c.other); got != c.want {
+				t.Errorf("%s/%s: got %q, want %q", c.name, side, got, c.want)
+			}
+		}
+	}
+}
+
+// Taking every change makes the target the other side; taking none leaves it.
+func TestRandomFullMergesSaveExactBytes(t *testing.T) {
+	r := rand.New(rand.NewSource(11))
+	vocabulary := []string{"a", "b", "  c", "", "", "é", "d e"}
+	build := func() string {
+		var b strings.Builder
+		for i, n := 0, 1+r.Intn(12); i < n; i++ {
+			b.WriteString(vocabulary[r.Intn(len(vocabulary))] + "\n")
+		}
+		return b.String()
+	}
+	for trial := 0; trial < 3000; trial++ {
+		target, other := build(), build()
+		for _, side := range []string{"left", "right"} {
+			if got := mergeWith(t, differ.Options{}, side, target, other); got != other {
+				t.Fatalf("trial %d %s: all picks gave %q, want %q (target %q)", trial, side, got, other, target)
+			}
+			path := t.TempDir() + "/f.txt"
+			if err := os.WriteFile(path, []byte(target), 0644); err != nil {
+				t.Fatal(err)
+			}
+			none := &ChangeSelection{ApplyInsertions: map[int]bool{}, ApplyDeletions: map[int]bool{}}
+			var result *MergeResult
+			if side == "left" {
+				result = New().ApplyToLeft(differ.New().CompareStrings("l", "r", target, other), none)
+			} else {
+				result = New().ApplyToRight(differ.New().CompareStrings("l", "r", other, target), none)
+			}
+			if _, err := SaveMerged(path, result); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(path); string(got) != target {
+				t.Fatalf("trial %d %s: no picks gave %q, want %q", trial, side, got, target)
 			}
 		}
 	}

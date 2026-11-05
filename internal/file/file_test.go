@@ -1,8 +1,11 @@
 package file
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -200,29 +203,6 @@ func TestFindAllFilesSkipsHiddenFiles(t *testing.T) {
 	}
 }
 
-func TestFindCommonFilesOnlyReturnsShared(t *testing.T) {
-	m := New()
-	leftRoot := makeTree(t, map[string]string{
-		"shared.go":    "a\n",
-		"left-only.go": "b\n",
-	})
-	rightRoot := makeTree(t, map[string]string{
-		"shared.go":     "a\n",
-		"right-only.go": "c\n",
-	})
-
-	leftInfo, _ := m.LoadPath(leftRoot)
-	rightInfo, _ := m.LoadPath(rightRoot)
-	common := FindCommonFiles(leftInfo, rightInfo)
-
-	if len(common) != 1 {
-		t.Errorf("expected 1 common file, got %d: %v", len(common), keys2(common))
-	}
-	if _, ok := common["shared.go"]; !ok {
-		t.Error("shared.go should be in common files")
-	}
-}
-
 // ---- LoadPath ---------------------------------------------------------------
 
 func TestLoadPathFile(t *testing.T) {
@@ -240,8 +220,8 @@ func TestLoadPathFile(t *testing.T) {
 	if fi.IsDir {
 		t.Error("file should not be IsDir")
 	}
-	if fi.Content != "hello\n" {
-		t.Errorf("content mismatch: got %q", fi.Content)
+	if got, _ := fi.Text(); got != "hello\n" {
+		t.Errorf("content mismatch: got %q", got)
 	}
 }
 
@@ -423,7 +403,7 @@ func TestNamedPathsAreNeverIgnored(t *testing.T) {
 	m.SetOptions(Options{Ignore: []string{"*.log", "node_modules"}})
 
 	f, err := m.LoadPath(filepath.Join(root, "b.log"))
-	if err != nil || f.Content != "x\n" {
+	if text, _ := f.Text(); err != nil || text != "x\n" {
 		t.Errorf("a named file: %+v, %v", f, err)
 	}
 	dir, err := m.LoadPath(filepath.Join(root, "node_modules"))
@@ -431,7 +411,227 @@ func TestNamedPathsAreNeverIgnored(t *testing.T) {
 		t.Errorf("a named folder: %v files, %v", len(dir.GetAllFiles()), err)
 	}
 	hidden, err := New().LoadPath(filepath.Join(root, ".env"))
-	if err != nil || hidden.Content != "x\n" {
+	if text, _ := hidden.Text(); err != nil || text != "x\n" {
 		t.Errorf("a named dotfile: %+v, %v", hidden, err)
+	}
+}
+
+func TestBinaryFilesAreNotReadInFull(t *testing.T) {
+	root := t.TempDir()
+	huge := filepath.Join(root, "huge.bin")
+	f, err := os.Create(huge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sparse, so it's instant to make, but reading it all would take 64 GB.
+	if err := f.Truncate(64 << 30); err != nil {
+		t.Skipf("can't make a sparse file here: %v", err)
+	}
+	f.Close()
+	for name, content := range map[string]string{
+		"text.txt":  "hello\n",
+		"notes":     "no extension, but text\n",
+		"data.txt":  "known extension\x00with a NUL\n",
+		"late.bin":  strings.Repeat("x", sniffSize) + "\x00 after the part that's checked\n",
+		"empty.dat": "",
+		"nul.dat":   "a\x00b",
+		"Makefile":  "all:\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	info, err := New().LoadPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string)
+	for _, fi := range info.GetTextFiles() {
+		got[fi.Name], _ = fi.Text()
+	}
+	want := map[string]string{
+		"text.txt": "hello\n",
+		"notes":    "no extension, but text\n",
+		"data.txt": "known extension\x00with a NUL\n",
+		"late.bin": strings.Repeat("x", sniffSize) + "\x00 after the part that's checked\n",
+		"Makefile": "all:\n",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("text files = %v", got)
+	}
+}
+
+func TestLoadKeepsTreeOrderAndSkipsUnreadable(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 200; i++ {
+		name := filepath.Join(root, fmt.Sprintf("d%d", i%5), fmt.Sprintf("f%03d.txt", i))
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte(fmt.Sprintf("content %d\n", i)), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := New().LoadPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := New().LoadPath(root)
+	a, b := first.GetAllFiles(), second.GetAllFiles()
+	if len(a) != 200 || len(a) != len(b) {
+		t.Fatalf("%d and %d files", len(a), len(b))
+	}
+	for i := range a {
+		textA, _ := a[i].Text()
+		textB, _ := b[i].Text()
+		if a[i].Path != b[i].Path || textA == "" || textA != textB {
+			t.Fatalf("file %d differs between loads: %s %s", i, a[i].Path, b[i].Path)
+		}
+	}
+
+	if os.Geteuid() == 0 {
+		return
+	}
+	locked := filepath.Join(root, "d0", "locked.txt")
+	if err := os.WriteFile(locked, []byte("x"), 0000); err != nil {
+		t.Fatal(err)
+	}
+	info, err := New().LoadPath(root)
+	if err != nil {
+		t.Fatalf("an unreadable file inside a folder shouldn't fail the load: %v", err)
+	}
+	for _, fi := range info.GetAllFiles() {
+		if fi.Path == locked {
+			t.Error("the unreadable file should be left out")
+		}
+	}
+	if _, err := New().LoadPath(locked); err == nil {
+		t.Error("naming an unreadable file should be an error")
+	}
+}
+
+func TestLoadingKeepsNoFileText(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "f.txt")
+	if err := os.WriteFile(path, []byte("original\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := New().LoadPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi := info.GetTextFiles()[0]
+	if fi.Content != "" {
+		t.Errorf("Content = %q, want the text left on disk", fi.Content)
+	}
+
+	// Text reads what's there now.
+	if err := os.WriteFile(path, []byte("edited since\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fi.Text(); err != nil || got != "edited since\n" {
+		t.Errorf("Text = %q, %v", got, err)
+	}
+
+	// A file gone since is an error, not empty text.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := fi.Text(); err == nil {
+		t.Errorf("Text = %q, want an error for a deleted file", got)
+	}
+
+	// Text not from disk is returned as it is.
+	inline := &FileInfo{Path: "git:HEAD:f", Name: "f", Content: "from git\n"}
+	if got, err := inline.Text(); err != nil || got != "from git\n" {
+		t.Errorf("inline Text = %q, %v", got, err)
+	}
+}
+
+func TestIdentical(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	big := strings.Repeat("a long line of text for several chunks\n", 8000) // over 64 KB
+	pairs := map[string][2]string{
+		"same.txt":      {"same\n", "same\n"},
+		"empty.txt":     {"", ""},
+		"size.txt":      {"short\n", "longer text\n"},
+		"content.txt":   {"abc\n", "abd\n"},
+		"crlf.txt":      {"a\r\nb\r\n", "a\nb\n"},
+		"big-same.txt":  {big, big},
+		"big-diff.txt":  {big + "x\n", big + "y\n"},
+		"big-early.txt": {"x" + big, "y" + big},
+	}
+	for name, p := range pairs {
+		if err := os.WriteFile(filepath.Join(left, name), []byte(p[0]), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(right, name), []byte(p[1]), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(left, "only.txt"), []byte("o\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := New().LoadPath(left)
+	r, _ := New().LoadPath(right)
+	files := FindAllFiles(l, r)
+
+	got := Identical(files, nil)
+	want := map[string]bool{"same.txt": true, "empty.txt": true, "big-same.txt": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("bytes: %v", got)
+	}
+
+	sameIgnoringCase := func(a, b string) bool { return strings.EqualFold(a, b) }
+	if got := Identical(files, sameIgnoringCase); got["size.txt"] || !got["same.txt"] {
+		t.Errorf("with a comparison: %v", got)
+	}
+
+	// With a comparison, different sizes can still be the same: no size shortcut.
+	ignoreCR := func(a, b string) bool { return strings.ReplaceAll(a, "\r", "") == strings.ReplaceAll(b, "\r", "") }
+	if got := Identical(files, ignoreCR); !got["crlf.txt"] {
+		t.Errorf("ignoring CR: %v", got)
+	}
+
+	// Inline text, as in git mode.
+	inline := map[string]*FileComparison{
+		"a": {Source: SourceBoth, LeftFile: &FileInfo{Content: "x"}, RightFile: &FileInfo{Content: "x"}},
+		"b": {Source: SourceBoth, LeftFile: &FileInfo{Content: "x"}, RightFile: &FileInfo{Content: "y"}},
+	}
+	if got := Identical(inline, nil); !got["a"] || got["b"] {
+		t.Errorf("inline: %v", got)
+	}
+
+	// A file that can't be read isn't identical, so it stays listed.
+	os.Remove(filepath.Join(left, "same.txt"))
+	if got := Identical(files, nil); got["same.txt"] {
+		t.Error("a deleted file counted as identical")
+	}
+}
+
+// Files of different sizes are known to differ without being read.
+func TestIdenticalDoesNotReadFilesOfDifferentSizes(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read anything")
+	}
+	left, right := t.TempDir(), t.TempDir()
+	lPath, rPath := filepath.Join(left, "f.txt"), filepath.Join(right, "f.txt")
+	if err := os.WriteFile(lPath, []byte("short\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rPath, []byte("much longer\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := New().LoadPath(left)
+	r, _ := New().LoadPath(right)
+	files := FindAllFiles(l, r)
+	// Replaced by something that blocks forever if opened.
+	os.Remove(lPath)
+	if err := syscallMkfifo(lPath); err != nil {
+		t.Skip(err)
+	}
+	if Identical(files, nil)["f.txt"] {
+		t.Error("files of different sizes reported as identical")
 	}
 }
