@@ -134,7 +134,7 @@ Getting around (press ? in the app for every key):
   /                Filter the file list by name
   c                Copy files that exist on only one side
   r / x            Reload / swap left and right
-  o / Ctrl+G       Change the paths / compare git refs
+  o / F2           Change the paths / compare git refs (Ctrl+G works too)
   ?                Help (F1 on the open screen)
   q / Ctrl+C       Quit (Ctrl+C on the open screen, where q types a q)
 

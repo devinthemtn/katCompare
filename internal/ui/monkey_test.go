@@ -19,7 +19,7 @@ func TestRandomKeysNeverBreakTheScreen(t *testing.T) {
 	keys := []string{
 		"j", "k", "g", "G", "h", "l", "n", "p", "s", "m", "c", "r", "x", "o", "/", "?", "t", "a",
 		"A", "o", "t", "b", "B", "u", "U", "O", "T", " ", "]", "[",
-		"enter", "esc", "tab", "shift+tab", "up", "down", "pgup", "pgdown", "backspace", "f1", "ctrl+d", "ctrl+g",
+		"enter", "esc", "tab", "shift+tab", "up", "down", "pgup", "pgdown", "backspace", "f1", "f2", "ctrl+d", "ctrl+g",
 		"text", "typed/path", "uni",
 	}
 	check := func(t *testing.T, m *Model, seed int64, step int, history []string) {
