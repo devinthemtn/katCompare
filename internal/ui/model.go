@@ -53,6 +53,7 @@ const (
 	focusInputLeft fileSelectFocus = iota
 	focusInputRight
 	focusViewDiffBtn
+	focusGitBtn
 	focusQuitBtn
 )
 
@@ -602,7 +603,7 @@ func (m *Model) handleOpenKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "?", "f1":
 		m.openHelp()
-	case "ctrl+g":
+	case "ctrl+g", "f2": // F2 because Zellij, for one, keeps Ctrl+G for itself
 		m.openGitSelect()
 	case "ctrl+d":
 		m.comparePaths()
@@ -661,13 +662,15 @@ func (m *Model) pressOpenButton() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case focusViewDiffBtn:
 		m.comparePaths()
+	case focusGitBtn:
+		m.openGitSelect()
 	}
 	return m, nil
 }
 
-// moveFocus moves through left field, right field, Compare and Quit.
+// moveFocus moves through left field, right field, Compare, Git and Quit.
 func (m *Model) moveFocus(dir int) {
-	const controls = 4
+	const controls = 5
 	m.focus = fileSelectFocus((int(m.focus) + dir + controls) % controls)
 	m.clearSuggestions()
 }
@@ -875,7 +878,7 @@ func (m *Model) handleFilesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.selectionChanged()
 	case "o":
 		m.openPaths()
-	case "ctrl+g":
+	case "ctrl+g", "f2": // F2 because Zellij, for one, keeps Ctrl+G for itself
 		m.openGitSelect()
 	case "r":
 		m.reload()
@@ -1131,7 +1134,7 @@ func (m *Model) handleDiffKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openPaths()
 		return m, nil
 
-	case "ctrl+g":
+	case "ctrl+g", "f2": // F2 because Zellij, for one, keeps Ctrl+G for itself
 		m.openGitSelect()
 		return m, nil
 

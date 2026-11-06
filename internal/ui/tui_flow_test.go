@@ -1124,3 +1124,88 @@ func TestZoomingTheTerminalKeepsThePosition(t *testing.T) {
 		}
 	}
 }
+
+// Zellij, for one, keeps Ctrl+G for itself, so git comparison needs other ways in.
+func TestGitCompareWithoutCtrlG(t *testing.T) {
+	repo := conflictRepo(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Git button: Tab from the left field past the right field and Compare.
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 34
+	if !strings.Contains(m.View(), "Git") {
+		t.Fatalf("no Git button:\n%s", m.View())
+	}
+	press(t, m, "tab", "tab", "tab")
+	if m.focus != focusGitBtn {
+		t.Fatalf("focus = %v, want the Git button", m.focus)
+	}
+	press(t, m, "enter")
+	if m.viewMode != ViewModeGitSelect {
+		t.Fatalf("Enter on Git: view = %v, err = %q", m.viewMode, m.errorMsg)
+	}
+	press(t, m, "esc")
+	if m.viewMode != ViewModeOpen {
+		t.Errorf("leaving the picker: view = %v", m.viewMode)
+	}
+
+	// Space presses it too, and Shift+Tab reaches it from the other way.
+	m = New()
+	m.windowWidth, m.windowHeight = 120, 34
+	press(t, m, "shift+tab", "shift+tab")
+	if m.focus != focusGitBtn {
+		t.Fatalf("focus = %v, want the Git button", m.focus)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")})
+	if m.viewMode != ViewModeGitSelect {
+		t.Errorf("Space on Git: view = %v", m.viewMode)
+	}
+
+	// Quit stays last, and Tab comes back round to the left field.
+	m = New()
+	press(t, m, "tab", "tab", "tab", "tab")
+	if m.focus != focusQuitBtn {
+		t.Errorf("focus = %v, want Quit", m.focus)
+	}
+	press(t, m, "tab")
+	if m.focus != focusInputLeft {
+		t.Errorf("focus = %v, want the left field", m.focus)
+	}
+
+	// F2 works while typing a path, without typing anything.
+	m = New()
+	m.windowWidth, m.windowHeight = 120, 34
+	press(t, m, "typed", "f2")
+	if m.viewMode != ViewModeGitSelect || m.inputLeft != "typed" {
+		t.Errorf("F2 on the open screen: view = %v, input = %q", m.viewMode, m.inputLeft)
+	}
+
+	// And from the file list and the diff.
+	m = New()
+	m.windowWidth, m.windowHeight = 120, 34
+	if err := m.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	m.ShowFileList()
+	press(t, m, "f2")
+	if m.viewMode != ViewModeGitSelect {
+		t.Errorf("F2 from the file list: view = %v", m.viewMode)
+	}
+	press(t, m, "esc", "enter", "f2")
+	if m.viewMode != ViewModeGitSelect {
+		t.Errorf("F2 from the diff: view = %v", m.viewMode)
+	}
+}
+
+func TestGitButtonOutsideARepositorySaysSo(t *testing.T) {
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 34
+	press(t, m, "tab", "tab", "tab", "enter")
+	if m.viewMode != ViewModeOpen || m.errorMsg == "" {
+		t.Errorf("view = %v, err = %q", m.viewMode, m.errorMsg)
+	}
+}

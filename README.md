@@ -259,7 +259,7 @@ The bottom line shows the keys that work right now, and `?` lists them all.
 - **x**: Swap left and right
 - **F**: Open both folders in your external diff tool
 - **o**: Change the paths
-- **Ctrl+G**: Compare git branches and commits
+- **F2** or **Ctrl+G**: Compare git branches and commits
 - **?**: Show help
 - **q/Ctrl+C**: Quit
 
@@ -318,7 +318,7 @@ Shown when you start `katcmp` with no paths, or press **o**. Paths are suggested
 - **Shift+Tab**: Previous field
 - **Enter**: Accept a suggestion, then move on and compare
 - **Esc**: Close the suggestions, then go back to the comparison
-- **Ctrl+G**: Compare git branches and commits
+- **F2**, **Ctrl+G** or the **Git** button: Compare git branches and commits (Zellij, for one, keeps Ctrl+G for itself)
 - **F1**: Help (`?` and `q` are ordinary characters in a path)
 - **Ctrl+C**: Quit
 
@@ -568,7 +568,7 @@ examples/       # Sample files for testing
 | `x` | ✅ | ✅ | ❌ | ❌ | Swap left and right |
 | `F` | ✅ | ✅ | ❌ | ❌ | Open both folders in the diff tool |
 | `o` | ✅ | ✅ | ❌ | ❌ | Change the paths |
-| `Ctrl+G` | ✅ | ✅ | ❌ | ❌ | Compare git refs |
+| `F2`, `Ctrl+G` | ✅ | ✅ | ❌ | ❌ | Compare git refs |
 | `e`/`E` | ✅ | ✅ | ❌ | ❌ | Edit right/left file in your editor |
 | `D` | ✅ | ✅ | ❌ | ❌ | Open in external diff tool |
 | `R` | ✅ | ✅ | ❌ | ❌ | Resolve git conflict with mergetool |

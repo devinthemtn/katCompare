@@ -58,7 +58,7 @@ func (m *Model) browseKeys() string {
 		keys = append(keys, key{"Esc", "clear filter"})
 	}
 	keys = append(keys, m.comparisonKeys()...)
-	return renderKeys(w, append(keys, key{"o", "paths"}, key{"Ctrl+G", "git"}, key{"q", "quit"}, help)...)
+	return renderKeys(w, append(keys, key{"o", "paths"}, key{"F2", "git"}, key{"q", "quit"}, help)...)
 }
 
 // comparisonKeys returns the whole-comparison keys that can work right now.
@@ -553,10 +553,10 @@ func (m *Model) renderOpenView() string {
 		}
 		return buttonStyle.Render(label)
 	}
-	lines = append(lines, "          "+button("Compare", m.focus == focusViewDiffBtn)+"  "+button("Quit", m.focus == focusQuitBtn))
-	lines = append(lines, "", keyActionStyle.Render(" Or press Ctrl+G to compare git branches and commits."))
+	lines = append(lines, "          "+button("Compare", m.focus == focusViewDiffBtn)+"  "+button("Git", m.focus == focusGitBtn)+"  "+button("Quit", m.focus == focusQuitBtn))
+	lines = append(lines, "", keyActionStyle.Render(" Or choose Git (F2) to compare branches and commits."))
 
-	keys := []key{{"Tab", "next"}, {"Enter", "accept / compare"}, {"↑↓", "suggestions"}, {"Ctrl+G", "git"}}
+	keys := []key{{"Tab", "next"}, {"Enter", "accept / compare"}, {"↑↓", "suggestions"}, {"F2", "git"}}
 	if len(m.allFiles) > 0 {
 		keys = append(keys, key{"Esc", "back"})
 	} else {
@@ -634,7 +634,7 @@ File list
   x                      Swap left and right
   F                      Open both folders in your diff tool
   o                      Change the paths
-  Ctrl+G                 Compare git branches and commits
+  F2 or Ctrl+G           Compare git branches and commits
   q                      Quit
 
 Diff
@@ -695,11 +695,11 @@ Open screen
   ↑/↓ or Tab             Choose a suggestion
   Enter                  Accept it, then move on and compare
   Shift+Tab              Previous field
-  Ctrl+G                 Compare git branches and commits
+  Git button             Compare git branches and commits (or F2 or Ctrl+G)
   F1                     Help (? is an ordinary character here)
   Ctrl+C                 Quit
 
-Git picker (Ctrl+G)
+Git picker (F2 or Ctrl+G)
   Type                   Enter any ref, or filter the list
   ↑/↓, PgUp/PgDn         Choose from branches, tags and recent commits
   Enter                  Accept the choice / compare when none is chosen
