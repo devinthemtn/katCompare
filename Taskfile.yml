@@ -130,6 +130,50 @@ tasks:
       - 'echo "✅ Multi-platform builds complete in {{.BUILD_DIR}}/"'
       - ls -la {{.BUILD_DIR}}/
 
+  # Builds every release file into BUILD_DIR from a clean, tagged commit:
+  #   git tag -a v1.2.3 -m "katCompare v1.2.3" && task release
+  # Then publish with: task release-publish NOTES=notes.md
+  release:
+    desc: Build all release binaries, the Windows installer and SHA256SUMS (needs a clean, tagged commit)
+    preconditions:
+      - sh: git describe --tags --exact-match >/dev/null 2>&1
+        msg: "HEAD has no tag. Tag it first, e.g.: git tag -a v1.2.3 -m \"katCompare v1.2.3\""
+      - sh: test -z "$(git status --porcelain)"
+        msg: "The working tree has uncommitted changes. Commit or stash them first."
+      - sh: command -v wails3
+        msg: '{{.WAILS_HINT}}'
+      - sh: command -v makensis
+        msg: "makensis not found. Install it with: sudo apt install nsis"
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - task: build-all
+      - GOOS=linux GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 {{.MAIN_FILE}}
+      - task: build-gui
+      - cp {{.GUI_BIN_DIR}}/{{.GUI_BINARY}} {{.BUILD_DIR}}/{{.GUI_BINARY}}-linux-amd64
+      - task: build-win-installer
+      - cd {{.BUILD_DIR}} && sha256sum {{.BINARY_NAME}}-* > SHA256SUMS
+      - 'echo "✅ Release {{.VERSION}} ready in {{.BUILD_DIR}}/"'
+      - ls -la {{.BUILD_DIR}}/
+
+  release-publish:
+    desc: Push main and the tag, and publish BUILD_DIR as a GitHub release (needs NOTES=<file>)
+    requires:
+      vars: [NOTES]
+    preconditions:
+      - sh: git describe --tags --exact-match >/dev/null 2>&1
+        msg: "HEAD has no tag. Run task release on a tagged commit first."
+      - sh: test -f "{{.NOTES}}"
+        msg: "Release notes file {{.NOTES}} not found."
+      - sh: test -f {{.BUILD_DIR}}/SHA256SUMS
+        msg: "No release build found. Run task release first."
+      - sh: command -v gh
+        msg: "gh CLI not found. See https://cli.github.com"
+    cmds:
+      - git push origin main
+      - git push origin {{.VERSION}}
+      - gh release create {{.VERSION}} --title {{.VERSION}} --notes-file "{{.NOTES}}" {{.BUILD_DIR}}/*
+      - 'echo "✅ Published {{.VERSION}}"'
+
   deps:
     desc: Install Go dependencies
     cmds:
