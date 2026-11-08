@@ -1885,6 +1885,10 @@ func (m *Model) LoadGitComparison(leftRef, rightRef string) error {
 			comparison.Source = file.SourceBoth
 		}
 
+		// Binary files are left out, as in a folder comparison.
+		if comparison.HasBinarySide() {
+			continue
+		}
 		m.allFiles[fs.Path] = comparison
 	}
 

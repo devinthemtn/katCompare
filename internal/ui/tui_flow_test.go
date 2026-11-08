@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1207,5 +1208,29 @@ func TestGitButtonOutsideARepositorySaysSo(t *testing.T) {
 	press(t, m, "tab", "tab", "tab", "enter")
 	if m.viewMode != ViewModeOpen || m.errorMsg == "" {
 		t.Errorf("view = %v, err = %q", m.viewMode, m.errorMsg)
+	}
+}
+
+func TestGitModeLeavesOutBinaryFiles(t *testing.T) {
+	dir := conflictRepo(t)
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig) //nolint:errcheck
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, dir, map[string]string{"image.png": "\x89PNG\x00", "notes.txt": "new\n"})
+	if out, err := exec.Command("git", "-C", dir, "add", "image.png", "notes.txt").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	m := New()
+	m.windowWidth, m.windowHeight = 120, 40
+	if err := m.LoadGitComparison("HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, listed := m.allFiles["image.png"]; listed {
+		t.Error("binary image.png is listed")
+	}
+	if _, listed := m.allFiles["notes.txt"]; !listed {
+		t.Error("text notes.txt is missing")
 	}
 }

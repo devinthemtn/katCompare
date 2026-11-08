@@ -561,3 +561,49 @@ func TestFontSettings(t *testing.T) {
 		t.Errorf("bad family should give all defaults: %+v", s)
 	}
 }
+
+func TestGitModeLeavesOutBinaryFiles(t *testing.T) {
+	dir := conflictRepo(t)
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(name, s string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("merge", "--abort")
+	write("image.png", "\x89PNG\x00old")
+	write("gone.bin", "\x00gone")
+	run("add", ".")
+	run("commit", "-qm", "binaries")
+
+	// Only binary files changed: there's nothing to show.
+	write("image.png", "\x89PNG\x00new")
+	if err := os.Remove(filepath.Join(dir, "gone.bin")); err != nil {
+		t.Fatal(err)
+	}
+	write("added.dat", "\x00\x01")
+	a := NewApp(nil)
+	if _, err := a.LoadGitComparison("HEAD", ""); err == nil || !strings.Contains(err.Error(), "no comparable text files") {
+		t.Fatalf("only binary changes: err = %v", err)
+	}
+
+	// With a text change too, only the text file is listed.
+	write("f.txt", "changed\n")
+	result, err := a.LoadGitComparison("HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0].RelPath != "f.txt" {
+		t.Fatalf("files = %+v, want only f.txt", result.Files)
+	}
+	if _, err := a.GetDiff("image.png"); err == nil {
+		t.Error("a binary file shouldn't open")
+	}
+}

@@ -249,6 +249,22 @@ func (fi *FileInfo) read() error {
 	return nil
 }
 
+// HasBinarySide reports whether either side held in memory, like a file from
+// git, is binary by the rule a folder comparison uses to leave a file out: a
+// NUL byte near the start, unless the name marks it as text.
+func (c *FileComparison) HasBinarySide() bool {
+	for _, fi := range []*FileInfo{c.LeftFile, c.RightFile} {
+		if fi == nil || fi.onDisk || fi.hasTextName() {
+			continue
+		}
+		head := fi.Content[:min(len(fi.Content), sniffSize)]
+		if strings.IndexByte(head, 0) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // IsTextFile checks if the file appears to be a text file. Known extensions and
 // names are accepted directly; anything else is sniffed for binary content.
 func (fi *FileInfo) IsTextFile() bool {

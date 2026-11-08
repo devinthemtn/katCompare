@@ -370,6 +370,11 @@ func (a *App) LoadGitComparison(leftRef, rightRef string) (*ComparisonResult, er
 			comparison.Source = file.SourceBoth
 		}
 
+		// Binary files are left out, as in a folder comparison: diffing one as
+		// text can send the page more than it can render.
+		if comparison.HasBinarySide() {
+			continue
+		}
 		allFiles[fs.Path] = comparison
 	}
 

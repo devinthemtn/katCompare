@@ -635,3 +635,24 @@ func TestIdenticalDoesNotReadFilesOfDifferentSizes(t *testing.T) {
 		t.Error("files of different sizes reported as identical")
 	}
 }
+
+func TestHasBinarySide(t *testing.T) {
+	side := func(name, content string) *FileInfo { return &FileInfo{Path: name, Name: name, Content: content} }
+	cases := []struct {
+		name string
+		comp FileComparison
+		want bool
+	}{
+		{"text both", FileComparison{LeftFile: side("a", "x\n"), RightFile: side("a", "y\n")}, false},
+		{"binary left", FileComparison{LeftFile: side("a.png", "\x89PNG\x00"), RightFile: side("a.png", "x")}, true},
+		{"binary right only", FileComparison{RightFile: side("a.dat", "\x00\x01")}, true},
+		{"NUL past the sniffed start", FileComparison{LeftFile: side("a", strings.Repeat("x", sniffSize)+"\x00")}, false},
+		{"text name keeps it", FileComparison{LeftFile: side("a.txt", "\x00")}, false},
+		{"empty", FileComparison{LeftFile: side("a", "")}, false},
+	}
+	for _, c := range cases {
+		if got := c.comp.HasBinarySide(); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
