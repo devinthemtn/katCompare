@@ -11,3 +11,10 @@
 
 # Merge output (merge mode saves <file>.merged)
 *.merged
+
+# Old pre-rename (filecmp) build leftovers
+/filecmp
+/filecmp-gui/
+
+# Merge backups
+*.orig
