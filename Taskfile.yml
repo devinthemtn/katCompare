@@ -19,6 +19,11 @@ vars:
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   LDFLAGS: -X main.version={{.VERSION}}
+  # Flags for published binaries: stripped, with no local paths embedded
+  RELEASE_FLAGS: -trimpath -ldflags="-s -w {{.LDFLAGS}}"
+  # Records which tag and commit "task release" built (a dotfile, so the
+  # build/* upload glob in release-publish leaves it out)
+  RELEASE_STAMP: '{{.BUILD_DIR}}/.release-version'
   # Install location (override with: task install BINDIR=/usr/local/bin)
   BINDIR:
     sh: echo "$(go env GOPATH)/bin"
@@ -123,10 +128,10 @@ tasks:
     deps: [build-gui-windows]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - GOOS=linux GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 {{.MAIN_FILE}}
-      - GOOS=darwin GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 {{.MAIN_FILE}}
-      - GOOS=darwin GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 {{.MAIN_FILE}}
-      - GOOS=windows GOARCH=amd64 go build -ldflags="{{.LDFLAGS}}" -o {{.WIN_TUI}} {{.MAIN_FILE}}
+      - GOOS=linux GOARCH=amd64 go build {{.RELEASE_FLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 {{.MAIN_FILE}}
+      - GOOS=darwin GOARCH=amd64 go build {{.RELEASE_FLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 {{.MAIN_FILE}}
+      - GOOS=darwin GOARCH=arm64 go build {{.RELEASE_FLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 {{.MAIN_FILE}}
+      - GOOS=windows GOARCH=amd64 go build {{.RELEASE_FLAGS}} -o {{.WIN_TUI}} {{.MAIN_FILE}}
       - 'echo "✅ Multi-platform builds complete in {{.BUILD_DIR}}/"'
       - ls -la {{.BUILD_DIR}}/
 
@@ -144,14 +149,25 @@ tasks:
         msg: '{{.WAILS_HINT}}'
       - sh: command -v makensis
         msg: "makensis not found. Install it with: sudo apt install nsis"
+      # The native GUI build is published as linux-amd64
+      - sh: '[ "$(go env GOOS)/$(go env GOARCH)" = linux/amd64 ]'
+        msg: "task release must run on a linux/amd64 host (the native GUI build is published as {{.GUI_BINARY}}-linux-amd64)."
+      # The installer and exe version come from katcmp-gui/build/config.yml
+      - sh: |
+          v=$(git describe --tags --exact-match 2>/dev/null); v=${v#v}
+          grep -Eq "^[[:space:]]*version:[[:space:]]*\"$v\"" {{.GUI_DIR}}/build/config.yml &&
+          grep -q "\"ProductVersion\": \"$v\"" {{.GUI_DIR}}/build/windows/info.json &&
+          grep -q "INFO_PRODUCTVERSION \"$v\"" {{.GUI_DIR}}/build/windows/nsis/wails_tools.nsh
+        msg: "The GUI version in {{.GUI_DIR}}/build/config.yml (info.version) does not match the tag. Set it to the tag without the leading v, run task update-gui-assets, and commit."
     cmds:
       - rm -rf {{.BUILD_DIR}}
       - task: build-all
-      - GOOS=linux GOARCH=arm64 go build -ldflags="{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 {{.MAIN_FILE}}
+      - GOOS=linux GOARCH=arm64 go build {{.RELEASE_FLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 {{.MAIN_FILE}}
       - task: build-gui
       - cp {{.GUI_BIN_DIR}}/{{.GUI_BINARY}} {{.BUILD_DIR}}/{{.GUI_BINARY}}-linux-amd64
       - task: build-win-installer
       - cd {{.BUILD_DIR}} && sha256sum {{.BINARY_NAME}}-* > SHA256SUMS
+      - echo "$(git describe --tags --exact-match) $(git rev-parse HEAD)" > {{.RELEASE_STAMP}}
       - 'echo "✅ Release {{.VERSION}} ready in {{.BUILD_DIR}}/"'
       - ls -la {{.BUILD_DIR}}/
 
@@ -162,10 +178,18 @@ tasks:
     preconditions:
       - sh: git describe --tags --exact-match >/dev/null 2>&1
         msg: "HEAD has no tag. Run task release on a tagged commit first."
+      - sh: test -z "$(git status --porcelain --untracked-files=no)"
+        msg: "Tracked files have changed since tagging (VERSION is {{.VERSION}}). Commit, stash or revert them first."
+      - sh: '[ "$(git describe --tags --exact-match)" = "{{.VERSION}}" ]'
+        msg: "VERSION ({{.VERSION}}) is not the tag on HEAD. Don't override VERSION when publishing."
+      - sh: '[ "$(git rev-parse --abbrev-ref HEAD)" = main ]'
+        msg: "Check out main first: release-publish pushes main, so the tagged commit must be on it."
       - sh: test -f "{{.NOTES}}"
         msg: "Release notes file {{.NOTES}} not found."
       - sh: test -f {{.BUILD_DIR}}/SHA256SUMS
         msg: "No release build found. Run task release first."
+      - sh: '[ "$(cat {{.RELEASE_STAMP}} 2>/dev/null)" = "{{.VERSION}} $(git rev-parse HEAD)" ]'
+        msg: "{{.BUILD_DIR}}/ was not built from {{.VERSION}} at HEAD. Run task release again."
       - sh: command -v gh
         msg: "gh CLI not found. See https://cli.github.com"
     cmds:
