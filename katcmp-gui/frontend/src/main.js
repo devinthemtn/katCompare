@@ -22,7 +22,7 @@ import {
     GetConflicts,
     SaveConflicts,
 } from '../bindings/katcompare/katcmp-gui/app.js';
-import { Events } from '@wailsio/runtime';
+import { Application, Dialogs, Events } from '@wailsio/runtime';
 
 // ---------------------------------------------------------------------------
 // State
@@ -63,6 +63,7 @@ const state = {
     conflicts: [], // ConflictBlockDTOs of the selected file (when conflicted)
     conflictChoices: [], // per block: '' | 'ours' | 'theirs' | 'both' | 'both-theirs-first'
     mergeSelection: { insertions: new Set(), deletions: new Set() },
+    mergeTouched: false, // the user changed a merge pick since the file was loaded
     targetDisk: 'unchanged', // the merge target on disk vs as loaded: 'unchanged' | 'changed' | 'missing'
     justSavedRelPath: null, // file whose next load keeps its target and starts with nothing checked
     copyTarget: 'to-right', // 'to-right' | 'to-left'
@@ -636,6 +637,15 @@ filterInput.addEventListener('input', () => {
     renderFileList();
 });
 
+// Esc in the filter clears it and hands the keys back to the shortcuts.
+filterInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    filterInput.value = '';
+    state.filterQuery = '';
+    renderFileList();
+    filterInput.blur();
+});
+
 function iconFor(entry) {
     if (entry.conflicted) return '<span class="icon icon-conflict">⚠</span>';
     if (entry.mergeStatus?.state === 'safe') return '<span class="icon icon-merged-safe">◆</span>';
@@ -753,6 +763,7 @@ async function selectFile(relPath) {
         // After a save nothing is pending, so nothing starts checked.
         if (justSaved) state.mergeSelection = { insertions: new Set(), deletions: new Set() };
         else resetMergeSelection();
+        state.mergeTouched = false;
         state.conflicts = [];
         state.conflictChoices = [];
         if (diff.conflicted) {
@@ -1489,6 +1500,7 @@ function syncMergeRows(diff, first, last) {
 }
 
 function mergePicksChanged(diff) {
+    state.mergeTouched = true;
     renderMergeToolbar(diff);
     refreshTargetDisk();
 }
@@ -1702,7 +1714,34 @@ helpModal.addEventListener('mousedown', (e) => {
     if (e.target === helpModal) closeHelpModal();
 });
 
+// hasUnsavedPicks says whether quitting would lose merge picks or conflict
+// choices. Merge picks start all checked, so only a change counts.
+function hasUnsavedPicks() {
+    return state.mergeTouched || state.conflictChoices.some((c) => c);
+}
+
+async function quitApp() {
+    if (hasUnsavedPicks()) {
+        const name = state.diff ? ` for ${state.diff.relPath}` : '';
+        const answer = await Dialogs.Question({
+            Title: 'Quit katCompare?',
+            Message: `You have unsaved merge picks or conflict choices${name}. Quit anyway?`,
+            Buttons: [{ Label: 'Quit' }, { Label: 'Cancel', IsCancel: true, IsDefault: true }],
+        }).catch(() => 'Cancel');
+        if (answer !== 'Quit') return;
+    }
+    Application.Quit();
+}
+
+const VIEW_KEYS = { 1: 'unified', 2: 'sidebyside', 3: 'merge', 4: 'conflicts' };
+
 document.addEventListener('keydown', (e) => {
+    // Quit works from anywhere, even while typing.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        quitApp();
+        return;
+    }
     // Font size, before anything that ignores keys while typing. This also stops
     // the browser's own page zoom, which would scale everything differently.
     if ((e.ctrlKey || e.metaKey) && !e.altKey && ['=', '+', '-', '_', '0'].includes(e.key)) {
@@ -1736,6 +1775,25 @@ document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === '?') {
         openHelpModal();
+        return;
+    }
+    if (e.key === 'q') {
+        quitApp();
+        return;
+    }
+    if (e.key === '/') {
+        e.preventDefault();
+        filterInput.focus();
+        filterInput.select();
+        return;
+    }
+    if (e.key === 'r') {
+        reloadComparison('Reloaded from disk.');
+        return;
+    }
+    if (e.key in VIEW_KEYS) {
+        const btn = document.querySelector(`#view-toggle [data-view="${VIEW_KEYS[e.key]}"]`);
+        if (btn && !btn.disabled) btn.click();
         return;
     }
     if (e.key === 'f') toggleFocus();
