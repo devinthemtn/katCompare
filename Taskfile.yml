@@ -228,38 +228,6 @@ tasks:
     cmds:
       - ./{{.BINARY_NAME}} examples/project-v1 examples/project-v2
 
-  demo:
-    desc: Run demo script
-    cmds: [./test-demo.sh]
-
-  demo-merge:
-    desc: Run comprehensive merge demo
-    cmds: [./merge-example.sh]
-
-  demo-merge-simple:
-    desc: Run simple merge demo
-    cmds: [./demo-merge.sh]
-
-  demo-all-files:
-    desc: Run all files demo (common + unique)
-    cmds: [./demo-all-files.sh]
-
-  demo-copy:
-    desc: Run copy functionality demo
-    cmds: [./demo-copy-files.sh]
-
-  demo-side-by-side:
-    desc: Run side-by-side view demo
-    cmds: [./demo-side-by-side.sh]
-
-  test-responsive:
-    desc: Test responsive design at different widths
-    cmds: [./test-responsive.sh]
-
-  test-width-fix:
-    desc: Test selected file status width fix
-    cmds: [./test-width-fix.sh]
-
   clean:
     desc: Clean build artifacts
     cmds:

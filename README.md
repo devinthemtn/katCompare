@@ -215,12 +215,6 @@ go build -o katcmp     # or: task deps && task build
 # Install dependencies and build
 task deps && task build
 
-# Try the demo with example files
-task demo
-
-# Demo the merge functionality
-task demo-merge
-
 # Quick test with sample files
 task run-files
 
