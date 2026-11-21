@@ -5,6 +5,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-21
+
 ### Added
 - GUI: `q` and `Ctrl+Q` quit, and ask first when there are unsaved merge picks
   or conflict choices.
@@ -87,7 +89,8 @@ First release: a TUI and a GUI for comparing files and folders, with external
 editor and diff tool support. Unknown file types are treated as text when
 they look like text.
 
-[Unreleased]: https://github.com/devinthemtn/katCompare/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/devinthemtn/katCompare/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/devinthemtn/katCompare/compare/v1.4.0...v2.0.0
 [1.4.0]: https://github.com/devinthemtn/katCompare/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/devinthemtn/katCompare/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/devinthemtn/katCompare/compare/v1.1.0...v1.2.0
