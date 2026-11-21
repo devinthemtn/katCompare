@@ -42,6 +42,9 @@ vars:
   # "katcmp-win" wrapper into BINDIR. Disable with: task install WSL=
   WSL:
     sh: grep -qi microsoft /proc/version 2>/dev/null && echo 1 || true
+  # Alternate command names installed next to each binary: katCmp runs
+  # katcmp, and the same goes for the -gui and -win forms.
+  ALIAS_NAMES: katCmp
 
 tasks:
   default:
@@ -281,12 +284,16 @@ tasks:
     deps: [build]
     cmds:
       - install -Dm755 {{.BINARY_NAME}}{{.EXE}} {{.BINDIR}}/{{.BINARY_NAME}}{{.EXE}}
+      - task: install-aliases
+        vars: {TARGET: '{{.BINARY_NAME}}{{.EXE}}', SUFFIX: '{{.EXE}}'}
 
   install-gui:
     desc: Build and install only the GUI (plus a launcher entry on Linux)
     deps: [build-gui]
     cmds:
       - install -Dm755 {{.GUI_BIN_DIR}}/{{.GUI_BINARY}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
+      - task: install-aliases
+        vars: {TARGET: '{{.GUI_BINARY}}{{.EXE}}', SUFFIX: '-gui{{.EXE}}'}
       - cmd: install -Dm644 {{.GUI_DIR}}/build/appicon.svg {{.GUI_ICON}}
         platforms: [linux]
       - cmd: >-
@@ -314,6 +321,21 @@ tasks:
       - mkdir -p {{.BINDIR}}
       - sed 's|@WIN_DIR@|{{.WIN_INSTALL_DIR}}|' scripts/katcmp-win > {{.BINDIR}}/katcmp-win
       - chmod 755 {{.BINDIR}}/katcmp-win
+      - task: install-aliases
+        vars: {TARGET: katcmp-win, SUFFIX: -win}
+
+  install-aliases:
+    internal: true
+    # Links each ALIAS_NAMES entry + SUFFIX in BINDIR to TARGET. On a
+    # case-insensitive filesystem (Windows, default macOS) katCmp already is
+    # katcmp, so it's skipped there; linking it would replace the binary.
+    cmds:
+      - |
+        for n in {{.ALIAS_NAMES}}; do
+          a="{{.BINDIR}}/$n{{.SUFFIX}}"
+          [ "$a" -ef "{{.BINDIR}}/{{.TARGET}}" ] && [ ! -L "$a" ] && continue
+          ln -sfn {{.TARGET}} "$a"
+        done
 
   uninstall-legacy:
     desc: Remove installs from before the rename to katCompare (filecmp, filecmp-gui, filecmp-win)
@@ -343,6 +365,9 @@ tasks:
         sh: echo "$(wslpath -u "$(cd /mnt/c 2>/dev/null; cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')" 2>/dev/null)/Programs/katCompare"
     cmds:
       - rm -f {{.BINDIR}}/{{.BINARY_NAME}}{{.EXE}} {{.BINDIR}}/{{.GUI_BINARY}}{{.EXE}}
+      - for n in {{.ALIAS_NAMES}}; do rm -f "{{.BINDIR}}/$n{{.EXE}}" "{{.BINDIR}}/$n-gui{{.EXE}}" "{{.BINDIR}}/$n-win"; done
+      # Older installs also linked katcompare / katCompare
+      - for n in katcompare katCompare; do rm -f "{{.BINDIR}}/$n{{.EXE}}" "{{.BINDIR}}/$n-gui{{.EXE}}" "{{.BINDIR}}/$n-win"; done
       - rm -f {{.DATADIR}}/applications/{{.GUI_BINARY}}.desktop {{.GUI_ICON}}
       - echo "🗑️  Removed {{.BINARY_NAME}} and {{.GUI_BINARY}} from {{.BINDIR}}"
       - cmd: rm -f {{.BINDIR}}/katcmp-win "{{.WIN_INSTALL_DIR}}/{{.BINARY_NAME}}.exe" "{{.WIN_INSTALL_DIR}}/{{.GUI_BINARY}}.exe"

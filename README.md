@@ -38,7 +38,7 @@ task install                          # builds TUI + GUI, installs to $(go env G
 task install BINDIR=~/.local/bin      # or pick another directory on your PATH
 ```
 
-This installs `katcmp` (TUI) and `katcmp-gui` (GUI). Use `task install-tui` / `task install-gui` for just one, and `task uninstall` to remove them.
+This installs `katcmp` (TUI) and `katcmp-gui` (GUI). `katCmp` works too (likewise `katCmp-gui`, and `katCmp-win` under WSL). Use `task install-tui` / `task install-gui` for just one, and `task uninstall` to remove them.
 
 > **Upgrading from File Compare?** The project was renamed to katCompare, and the commands changed from `filecmp` / `filecmp-gui` / `filecmp-win` to `katcmp` / `katcmp-gui` / `katcmp-win`. `task install` removes the old commands, launcher entry and Windows folder (`task uninstall-legacy` does just that). `FILECMP_EDITOR` still works, but `KATCMP_EDITOR` is the new name. If you used the old Windows installer, uninstall "File Compare" from Windows Settings → Apps.
 
