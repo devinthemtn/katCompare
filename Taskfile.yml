@@ -213,6 +213,12 @@ tasks:
       # gtk3: the GUI package links GTK3/webkit2gtk-4.1 on Linux (no-op elsewhere)
       - go test -tags gtk3 ./...
 
+  test-race:
+    desc: Run tests with the race detector (skips slow tests)
+    cmds:
+      # -short skips tests that take minutes under -race
+      - go test -race -short -tags gtk3 ./...
+
   run:
     desc: Run the TUI in interactive mode
     cmds:
