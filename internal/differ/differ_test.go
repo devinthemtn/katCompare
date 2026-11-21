@@ -16,14 +16,6 @@ func mustCompare(t *testing.T, d *Differ, left, right string) *FileDiff {
 	return diff
 }
 
-func lineTypes(diff *FileDiff) []DiffType {
-	types := make([]DiffType, len(diff.Lines))
-	for i, l := range diff.Lines {
-		types[i] = l.Type
-	}
-	return types
-}
-
 // ---- identical files --------------------------------------------------------
 
 func TestIdenticalFiles(t *testing.T) {

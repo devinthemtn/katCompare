@@ -3,6 +3,7 @@
 package external
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -349,7 +350,7 @@ func gitDiffToolCommand(req DiffRequest, gui bool) (*exec.Cmd, error) {
 	}
 	name, configured := resolveTool(req.GitRoot, "diff", gui)
 	if name == "" {
-		return nil, fmt.Errorf(NoDiffToolHint)
+		return nil, errors.New(NoDiffToolHint)
 	}
 	toolArg := "--tool=" + name
 	if t, ok := knownTools[name]; ok && t.extcmd && !configured {
@@ -379,7 +380,7 @@ func filesDiffToolCommand(req DiffRequest, gui bool) (*exec.Cmd, error) {
 
 	name, configured := resolveTool(dir, "diff", gui)
 	if name == "" {
-		return nil, fmt.Errorf(NoDiffToolHint)
+		return nil, errors.New(NoDiffToolHint)
 	}
 
 	// A configured tool goes through git, which knows every builtin tool and
@@ -413,7 +414,7 @@ func DirDiffCommand(leftDir, rightDir string, gui bool) (*exec.Cmd, error) {
 	dir := neutralDir(left, right)
 	name, _ := resolveTool(dir, "diff", gui)
 	if name == "" {
-		return nil, fmt.Errorf(NoDiffToolHint)
+		return nil, errors.New(NoDiffToolHint)
 	}
 	if !SupportsDirDiff(dir, name) {
 		return nil, fmt.Errorf("diff tool %q can't compare whole directories (meld, kdiff3 and Beyond Compare can)", name)
@@ -509,7 +510,7 @@ func MergeToolCommand(root, relPath string, gui bool) (*exec.Cmd, error) {
 	}
 	name, _ := resolveTool(root, "merge", gui)
 	if name == "" {
-		return nil, fmt.Errorf(NoMergeToolHint)
+		return nil, errors.New(NoMergeToolHint)
 	}
 	return exec.Command("git", "-C", root, "mergetool", "-y", "--tool="+name, "--", relPath), nil
 }

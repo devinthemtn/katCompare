@@ -227,7 +227,7 @@ func (fi *FileInfo) Stamp() string {
 const sniffSize = 8000
 
 // sniffBuffers saves allocating a buffer for each file in a large folder.
-var sniffBuffers = sync.Pool{New: func() any { return make([]byte, sniffSize) }}
+var sniffBuffers = sync.Pool{New: func() any { b := make([]byte, sniffSize); return &b }}
 
 // read checks the file can be read and whether it's text, from its start alone.
 func (fi *FileInfo) read() error {
@@ -237,8 +237,9 @@ func (fi *FileInfo) read() error {
 	}
 	defer f.Close()
 
-	head := sniffBuffers.Get().([]byte)
-	defer sniffBuffers.Put(head)
+	headp := sniffBuffers.Get().(*[]byte)
+	defer sniffBuffers.Put(headp)
+	head := *headp
 	n, err := io.ReadFull(f, head)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return err
@@ -504,7 +505,7 @@ func isIdentical(left, right *FileInfo, same func(left, right string) bool) bool
 }
 
 // compareBuffers saves allocating buffers for each file in a large folder.
-var compareBuffers = sync.Pool{New: func() any { return make([]byte, 64*1024) }}
+var compareBuffers = sync.Pool{New: func() any { b := make([]byte, 64*1024); return &b }}
 
 // sameBytes compares two files on disk, stopping at the first difference.
 func sameBytes(leftPath, rightPath string) bool {
@@ -519,10 +520,11 @@ func sameBytes(leftPath, rightPath string) bool {
 	}
 	defer r.Close()
 
-	leftBuf := compareBuffers.Get().([]byte)
-	defer compareBuffers.Put(leftBuf)
-	rightBuf := compareBuffers.Get().([]byte)
-	defer compareBuffers.Put(rightBuf)
+	leftp := compareBuffers.Get().(*[]byte)
+	defer compareBuffers.Put(leftp)
+	rightp := compareBuffers.Get().(*[]byte)
+	defer compareBuffers.Put(rightp)
+	leftBuf, rightBuf := *leftp, *rightp
 	for {
 		n, leftErr := io.ReadFull(l, leftBuf)
 		m, rightErr := io.ReadFull(r, rightBuf)
