@@ -180,7 +180,7 @@ func (m *Merger) ApplyToRight(diff *differ.FileDiff, selection *ChangeSelection)
 	return finishMerge(&result, applied, skipped)
 }
 
-// finishMerge builds a MergeResult, without the final newline: SaveWithBackup
+// finishMerge builds a MergeResult, without the final newline: SaveVerified
 // gives the file the trailing newline it had.
 func finishMerge(result *strings.Builder, applied, skipped int) *MergeResult {
 	return &MergeResult{
@@ -254,13 +254,13 @@ func (cs *ChangeSelection) GetSelectedStats(diff *differ.FileDiff) (int, int, in
 func (m *Merger) CreateMergePreview(diff *differ.FileDiff, selection *ChangeSelection, targetSide string) string {
 	var preview strings.Builder
 
-	preview.WriteString(fmt.Sprintf("=== Merge Preview (applying to %s) ===\n\n", targetSide))
+	fmt.Fprintf(&preview, "=== Merge Preview (applying to %s) ===\n\n", targetSide)
 
 	selectedIns, totalIns, selectedDel, totalDel := selection.GetSelectedStats(diff)
-	preview.WriteString(fmt.Sprintf("Changes to apply:\n"))
-	preview.WriteString(fmt.Sprintf("  Insertions: %d/%d selected\n", selectedIns, totalIns))
-	preview.WriteString(fmt.Sprintf("  Deletions:  %d/%d selected\n", selectedDel, totalDel))
-	preview.WriteString(fmt.Sprintf("\n"))
+	preview.WriteString("Changes to apply:\n")
+	fmt.Fprintf(&preview, "  Insertions: %d/%d selected\n", selectedIns, totalIns)
+	fmt.Fprintf(&preview, "  Deletions:  %d/%d selected\n", selectedDel, totalDel)
+	preview.WriteString("\n")
 
 	// Show first few lines of the result
 	var result *MergeResult
@@ -316,25 +316,6 @@ func (cs *ChangeSelection) ToggleBlock(diff *differ.FileDiff, lineIndex int) {
 			cs.ApplyDeletions[i] = !allOn
 		}
 	}
-}
-
-// SaveWithBackup overwrites path with content, first copying the current
-// file to path+".orig". The file keeps its permissions, and its trailing
-// newline (the merge result has none) when it had one. It returns the
-// backup path.
-func SaveWithBackup(path, content string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	if info.IsDir() {
-		return "", fmt.Errorf("%s is a directory", path)
-	}
-	old, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return writeWithBackup(path, old, withTrailingNewline(old, content))
 }
 
 // writeWithBackup writes old to path+".orig" and content to path, keeping the
@@ -420,8 +401,10 @@ func HashContent(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// SaveVerified saves like SaveWithBackup, then reads back the file and its
-// backup and looks for leftover conflict markers. It returns an error only
+// SaveVerified overwrites path with content, first copying the current file
+// to path+".orig". The file keeps its permissions, and its trailing newline
+// (the merge result has none) when it had one. It then reads back the file and
+// its backup and looks for leftover conflict markers. It returns an error only
 // when the save itself fails; anything the checks find goes in Issues.
 func SaveVerified(path, content string) (*SaveReport, error) {
 	old, err := os.ReadFile(path)

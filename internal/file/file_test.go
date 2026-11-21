@@ -262,14 +262,6 @@ func keys(m map[string]*FileComparison) []string {
 	return out
 }
 
-func keys2(m map[string][2]*FileInfo) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
 func TestIsTextFileUnknownExtensionSniffsContent(t *testing.T) {
 	fi := &FileInfo{Path: "notes.log", Name: "notes.log", Content: "plain text\nline two\n"}
 	if !fi.IsTextFile() {

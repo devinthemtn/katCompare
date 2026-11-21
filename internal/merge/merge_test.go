@@ -245,7 +245,7 @@ func TestMergeSymmetry(t *testing.T) {
 	}
 }
 
-// ---- ToggleBlock / SaveWithBackup -------------------------------------------
+// ---- ToggleBlock / SaveVerified ---------------------------------------------
 
 func TestToggleBlock(t *testing.T) {
 	// One block (delete b, insert X, Y) between equal lines.
@@ -278,16 +278,20 @@ func TestToggleBlock(t *testing.T) {
 	}
 }
 
-func TestSaveWithBackup(t *testing.T) {
+func TestSaveVerifiedKeepsBackupModeAndNewline(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/f.txt"
 	if err := os.WriteFile(path, []byte("old\n"), 0640); err != nil {
 		t.Fatal(err)
 	}
-	backup, err := SaveWithBackup(path, "new")
+	report, err := SaveVerified(path, "new")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(report.Issues) != 0 {
+		t.Errorf("unexpected issues: %v", report.Issues)
+	}
+	backup := report.Backup
 	got, _ := os.ReadFile(path)
 	if string(got) != "new\n" {
 		t.Errorf("saved %q, want %q (trailing newline kept)", got, "new\n")
@@ -299,7 +303,7 @@ func TestSaveWithBackup(t *testing.T) {
 	if info, _ := os.Stat(path); info.Mode().Perm() != 0640 {
 		t.Errorf("mode = %v, want 0640", info.Mode().Perm())
 	}
-	if _, err := SaveWithBackup(dir+"/missing", "x"); err == nil {
+	if _, err := SaveVerified(dir+"/missing", "x"); err == nil {
 		t.Error("expected error for a missing file")
 	}
 }
