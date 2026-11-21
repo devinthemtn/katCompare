@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=katCompare
+Comment=Compare files and directories side by side
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/katcmp-gui %u
+Terminal=false
+Type=Application
+Icon=katcmp-gui
+Categories=Utility;
+StartupWMClass=katcmp-gui
+
+ 
