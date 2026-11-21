@@ -17,6 +17,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - `task test-race` runs the tests with the race detector.
 
 ### Changed
+- Built with Go 1.26.11 (pinned with a `toolchain` line in `go.mod`), which
+  picks up the standard library security fixes since 1.26.8.
 - Published TUI binaries are stripped and built with `-trimpath`.
 - `.orig` merge backups and old `filecmp` build leftovers are ignored by git.
 

@@ -54,7 +54,7 @@ The wrapper converts path arguments to Windows paths. The plain GUI form returns
 
 ### Desktop GUI
 
-Requires Go 1.25+, Node.js, [go-task](https://taskfile.dev) and the [Wails v3 CLI](https://v3.wails.io):
+Requires Go 1.26+, Node.js, [go-task](https://taskfile.dev) and the [Wails v3 CLI](https://v3.wails.io):
 
 ```bash
 go install github.com/wailsapp/wails/v3/cmd/wails3@latest
@@ -96,7 +96,7 @@ The desktop app lives in [`katcmp-gui/`](katcmp-gui/). It imports the same diff/
 
 ### Building the GUI
 
-Prerequisites: Go 1.25+, Node.js (for the Vite-built frontend), [go-task](https://taskfile.dev), and the Wails v3 CLI:
+Prerequisites: Go 1.26+, Node.js (for the Vite-built frontend), [go-task](https://taskfile.dev), and the Wails v3 CLI:
 
 ```bash
 go install github.com/go-task/task/v3/cmd/task@latest
